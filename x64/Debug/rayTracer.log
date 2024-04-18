@@ -1,0 +1,44 @@
+﻿  Camera.cpp
+  d3dApp.cpp
+  d3dUtil.cpp
+  DDSTextureLoader.cpp
+  GameTimer.cpp
+  GeometryGenerator.cpp
+  MathHelper.cpp
+  raytracer.cpp
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(395,67): warning C4229: 使用了记时错误: 忽略数据上的修饰符
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(411,71): warning C4229: 使用了记时错误: 忽略数据上的修饰符
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(6,1): warning C4005: “GRS_WND_CLASS_NAME”: 宏重定义
+C:\mytinyrenderproj\rayTracer\rayTracer\d3dUtil.h(59,1): message : 参见“GRS_WND_CLASS_NAME”的前一个定义
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(7,1): warning C4005: “GRS_WND_TITLE”: 宏重定义
+C:\mytinyrenderproj\rayTracer\rayTracer\d3dUtil.h(60,1): message : 参见“GRS_WND_TITLE”的前一个定义
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(37,21): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(38,21): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(57,25): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(58,25): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(520,40): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(582,106): warning C4267: “参数”: 从“size_t”转换到“DWORD”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(618,77): warning C4267: “参数”: 从“size_t”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(619,20): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(643,122): warning C4267: “参数”: 从“size_t”转换到“DWORD”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(660,89): warning C4267: “参数”: 从“size_t”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(661,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(682,29): warning C4244: “初始化”: 从“double”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(781,89): warning C4267: “参数”: 从“size_t”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(782,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(788,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(790,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(814,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(817,89): warning C4267: “参数”: 从“size_t”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(819,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(839,86): warning C4267: “参数”: 从“size_t”转换到“DWORD”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(689,30): warning C4101: “front”: 未引用的局部变量
+C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include\memory(3393,1): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(478,213): message : 查看对正在编译的函数 模板 实例化“std::unique_ptr<RenderItem,std::default_delete<RenderItem>> std::make_unique<RenderItem,GeometryItem*,int,int,int,unsigned __int64,int,D3D_PRIMITIVE_TOPOLOGY,objectconstant*,T*,ID3D12GraphicsCommandList*,ID3D12DescriptorHeap*,0>(GeometryItem *&&,int &&,int &&,int &&,unsigned __int64 &&,int &&,D3D_PRIMITIVE_TOPOLOGY &&,objectconstant *&&,T *&&,ID3D12GraphicsCommandList *&&,ID3D12DescriptorHeap *&&)”的引用
+          with
+          [
+              T=ID3D12Device4
+          ]
+  正在生成代码...
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(457): warning C4715: “APP::createWindow”: 不是所有的控件路径都返回值
+  rayTracer.vcxproj -> C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.exe
