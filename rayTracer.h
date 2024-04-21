@@ -4,6 +4,7 @@
 #include<process.h>
 #include <atlcoll.h>
 #include<windowsx.h>
+#define GRS_UPPER(A,B) ((UINT)(((A)+((B)-1))&~(B - 1)))
 HANDLE g_hOutput = 0;
 std::unordered_map<ID3D12DescriptorHeap*, UINT>HeapOffsetTable;
 meshdata subvide(meshdata mesh, int vsize, int isize) {//传入正十二面体顶点，创建球的顶点
@@ -50,8 +51,387 @@ struct Vertex
     float AOk = 0;
     XMFLOAT3 color;
 };
+struct ResourceID {
+    int HeapIndex;
+    int HeapOffset;
+};
+struct buddyID {
+    int level;
+    int index;
+};
+class buddySystem {
+public:
+    buddySystem() = default;
+    buddySystem(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device) {
+        init(totalSizeInKB, hierarchy, device);
+    }
+   virtual void init(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device) {
+        totalSize = totalSizeInKB * 1024;
+        Hierarchy = hierarchy;
+        minSize = totalSize / pow(2, hierarchy - 1);
+        stateList = new std::vector<int>[hierarchy];
+        for (int i = 0;i < hierarchy;i++) {
+            stateList[i].resize(pow(2, hierarchy - i + 1));
+        }
+    }
+   buddyID createPlacedBufferResourceInBS(ID3D12Resource** BufferResource, ID3D12Device4* device, UINT BufferSize) {
+       buddyID ID = allocate(BufferSize);
+       if (ID.index != -1) {
+           ThrowIfFailed(device->CreatePlacedResource(
+               Heap.Get()
+               , ID.index * minSize * pow(2, ID.level)
+               , &CD3DX12_RESOURCE_DESC::Buffer(BufferSize)
+               , D3D12_RESOURCE_STATE_GENERIC_READ
+               , nullptr
+               , IID_PPV_ARGS(BufferResource)));
+       }
+       return ID;
+   }
+    buddyID allocate(UINT size) {
+        buddyID ID = { -1,-1 };
+        UINT currentSize = minSize;
+        int level = 0;
+        while (size > currentSize) {
+            level++;
+            currentSize *= 2;
+            if (level > Hierarchy - 1)
+                return ID;
+        }
+        for (int i = 0;i < stateList[level].size();i++) {
+            if (stateList[level][i] == 0) {
+                stateList[level][i] = 1;
+                for (int j = level + 1;j < Hierarchy - 1;j++)
+                    stateList[j][i / pow(2, j - level)] = 1;
+                for (int j = level - 1;j >= 0;j--) {
+                    for (int k = 0;k < pow(2, level - j);k++)
+                        stateList[j][i * pow(2, level - j) + k] = 1;
+                }
+                ID.level = level;
+                ID.index = i;
+                return ID;
+            }
+        }
+        return ID;
+    }
+    void free(buddyID ID) {
+        stateList[ID.level][ID.index] = 0;
+        for (int j = ID.level;j < Hierarchy - 1;j++) {
+            int cindex = ID.index / pow(2, j - ID.level);
+            stateList[j][cindex] = 0;
+            if (ID.index % 2 == 0) {
+                if (stateList[j][cindex + 1] == 0)
+                    continue;
+                break;
+            }
+            else {
+                if (stateList[j][cindex - 1] == 0)
+                    continue;
+                break;
+            }
+        }
+        for (int j = ID.level - 1;j >= 0;j--) {
+            for (int k = 0;k < pow(2, ID.level - j);k++)
+                stateList[j][ID.index * pow(2, ID.level - j) + k] = 0;
+        }
+    }
+    std::vector<int>* stateList;
+    UINT totalSize;
+    UINT minSize;
+    UINT Hierarchy;
+    ComPtr<ID3D12Heap> Heap;
+};
+class uploadBuddySystem :buddySystem {
+public:
+    uploadBuddySystem() = default;
+    uploadBuddySystem(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device) {
+        init(totalSizeInKB, hierarchy, device);
+    }
+     void init(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device)override {
+        buddySystem::init(totalSizeInKB, hierarchy, device);
+        D3D12_HEAP_DESC stDefaultHeapDesc = {  };
+        stDefaultHeapDesc.Alignment = 0;
+        stDefaultHeapDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;		//上传堆类型
+        stDefaultHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        stDefaultHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        stDefaultHeapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
+        stDefaultHeapDesc.SizeInBytes = totalSize;
+        ThrowIfFailed(device->CreateHeap(&stDefaultHeapDesc, IID_PPV_ARGS(&Heap)));
+    }
+     buddyID createPlacedBufferResourceInBS(ID3D12Resource** BufferResource, ID3D12Device4* device,UINT BufferSize) {
+         return  buddySystem::createPlacedBufferResourceInBS(BufferResource, device, BufferSize);
+     }
+     buddyID allocate(UINT size) {
+         return  buddySystem::allocate(size);
+     }
+     void free(buddyID ID) {
+         buddySystem::free(ID);
+     }
+};
+class defaultBuddySystem :buddySystem {
+public:
+    defaultBuddySystem() = default;
+    defaultBuddySystem(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device) {
+        init(totalSizeInKB, hierarchy, device);
+    }
+     void init(UINT totalSizeInKB, UINT hierarchy, ID3D12Device4* device)override {
+        buddySystem::init(totalSizeInKB, hierarchy, device);
+        D3D12_HEAP_DESC stDefaultHeapDesc = {  };
+        stDefaultHeapDesc.Alignment = 0;
+        stDefaultHeapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;		
+        stDefaultHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        stDefaultHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        stDefaultHeapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
+        stDefaultHeapDesc.SizeInBytes = totalSize;
+        ThrowIfFailed(device->CreateHeap(&stDefaultHeapDesc, IID_PPV_ARGS(&Heap)));
+    }
+     buddyID createPlacedBufferResourceInBS(ID3D12Resource** BufferResource, ID3D12Device4* device,UINT BufferSize) {
+        return buddySystem::createPlacedBufferResourceInBS(BufferResource, device, BufferSize);
+     }
+     buddyID allocate(UINT size) {
+        return buddySystem::allocate(size);
+     }
+     void free(buddyID ID) {
+         buddySystem::free(ID);
+     }
+};
+class SegregatedFreeLists {
 
-
+};
+class RT_DS_TextureSegregatedFreeLists:SegregatedFreeLists {
+public:
+    RT_DS_TextureSegregatedFreeLists() = default;
+    RT_DS_TextureSegregatedFreeLists(UINT minsizeinKB, UINT listnum, ID3D12Device4* device) {
+        init(minsizeinKB, listnum, device);
+    }
+    ~RT_DS_TextureSegregatedFreeLists() {
+        delete[]DefaultHeapState;
+    }
+    void freeDefaultResource(ResourceID ID) {
+        DefaultHeapDeadLists[ID.HeapIndex].push_back(ID.HeapOffset);
+        DefaultHeapState[ID.HeapIndex][1]--;
+    }
+    void init(UINT minsizeinKB, UINT listnum, ID3D12Device4* device) {
+        minSizeInKB = minsizeinKB;
+        listNum = listnum;
+        Device = device;
+        DefaultHeaps.resize(listNum);
+        DefaultHeapDeadLists = new std::vector<int>[listnum];
+        DefaultHeapState = new std::vector<int>[listnum];
+        for (int i = 0;i < listnum;i++) {
+            DefaultHeapState[i].resize(2);
+            DefaultHeapState[i] = {0,0};
+        }
+    }
+    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear) {
+        UINT currentSize = minSizeInKB*1000;
+        int level = 0;
+        ResourceID ID = { -1,-1 };
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT  TexLayouts = {};
+        UINT                                nNumRows = {};
+        UINT64                              n64RowSizeInBytes = {};
+        UINT64                              n64TotalBytes = 0;
+        Device->GetCopyableFootprints(TextureDesc, 0, 1, 0, &TexLayouts, &nNumRows, &n64RowSizeInBytes, &n64TotalBytes);
+        while (currentSize < n64TotalBytes) {
+            currentSize *= 2;
+            level++;
+        }
+        if (level > listNum - 1)
+            return ID;
+        int NumResource = pow(2, 3 - min(3, level));
+        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        if (DefaultHeapState[level][0] == 0)
+        {
+            DefaultHeapState[level][0] = 1;
+            D3D12_HEAP_DESC stDefaultHeapDesc = {  };
+            stDefaultHeapDesc.Alignment = 0;
+            stDefaultHeapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;		//上传堆类型
+            stDefaultHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+            stDefaultHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+            stDefaultHeapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES;
+            stDefaultHeapDesc.SizeInBytes = SizeResource * NumResource;
+            ThrowIfFailed(Device->CreateHeap(&stDefaultHeapDesc, IID_PPV_ARGS(&DefaultHeaps[level])));
+        }
+        if (DefaultHeapState[level][1] < NumResource)
+        {
+            int offset;
+            if (!DefaultHeapDeadLists[level].empty())
+            {
+                offset = DefaultHeapDeadLists[level].back();
+                DefaultHeapDeadLists[level].pop_back();
+            }
+            else
+                offset = DefaultHeapState[level][1];
+            ThrowIfFailed(Device->CreatePlacedResource(
+                DefaultHeaps[level].Get()
+                , offset * SizeResource
+                , TextureDesc
+                , D3D12_RESOURCE_STATE_GENERIC_READ
+                , dsclear
+                , IID_PPV_ARGS(Tex)));
+            DefaultHeapState[level][1]++;
+            ID.HeapIndex = level;
+            ID.HeapOffset = offset;
+            return ID;
+        }
+        return ID;
+    }
+private:
+    ID3D12Device4* Device;
+    std::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
+    UINT minSizeInKB;
+    UINT listNum;
+    std::vector<int>(* DefaultHeapDeadLists);
+    std::vector<int>(* DefaultHeapState);
+};
+class NON_RT_DS_TextureSegregatedFreeLists :SegregatedFreeLists {
+public:
+    NON_RT_DS_TextureSegregatedFreeLists() = default;
+    NON_RT_DS_TextureSegregatedFreeLists(UINT minsizeinKB, UINT listnum, ID3D12Device4* device) {
+        init(minsizeinKB,listnum,device);
+    }
+    ~NON_RT_DS_TextureSegregatedFreeLists() {
+        delete[]UploadHeapState;
+        delete[]DefaultHeapState;
+        delete[]UploadHeapDeadLists;
+        delete[]DefaultHeapDeadLists;
+    }
+    void freeUploadResource(ResourceID ID) {
+        UploadHeapDeadLists[ID.HeapIndex].push_back(ID.HeapOffset);
+        UploadHeapState[ID.HeapIndex][1]--;
+    }
+    void freeDefaultResource(ResourceID ID) {
+        DefaultHeapDeadLists[ID.HeapIndex].push_back(ID.HeapOffset);
+        DefaultHeapState[ID.HeapIndex][1]--;
+    }
+    void init(UINT minsizeinKB, UINT listnum, ID3D12Device4* device) {
+        minSizeInKB = minsizeinKB;
+        listNum = listnum;
+        Device = device;
+        UploadHeaps.resize(listNum);
+        DefaultHeaps.resize(listNum);
+        UploadHeapState = new std::vector<int>[listnum];
+        DefaultHeapState = new std::vector<int>[listnum];
+        UploadHeapDeadLists = new std::vector<int>[listnum];
+        DefaultHeapDeadLists = new std::vector<int>[listnum];
+        for (int i = 0;i < listnum;i++) {
+            UploadHeapState[i].resize(2);
+            UploadHeapState[i] = {0,0};
+            DefaultHeapState[i].resize(2);
+            DefaultHeapState[i] = { 0,0 };
+        }
+    }
+    ResourceID createPlacedResourceInUploadTexSFLHeap(ID3D12Resource*Tex,UINT BufferSize) {
+        UINT currentSize = minSizeInKB*1000;
+        int level = 0;
+        ResourceID ID = {-1,-1};
+        while (currentSize < BufferSize) {
+            currentSize *= 2;
+            level++;
+        }
+        if (level > listNum-1)
+            return ID;
+        int NumResource = pow(2, 3 - min(3, level));
+        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        if (UploadHeapState[level][0] == 0)
+        {
+            UploadHeapState[level][0] = 1;
+            D3D12_HEAP_DESC stUploadHeapDesc = {  };
+                stUploadHeapDesc.Alignment = 0;
+                stUploadHeapDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;		//上传堆类型
+                stUploadHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+                stUploadHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+                stUploadHeapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+                stUploadHeapDesc.SizeInBytes = SizeResource *NumResource;
+                ThrowIfFailed(Device->CreateHeap(&stUploadHeapDesc, IID_PPV_ARGS(&UploadHeaps[level])));
+        }
+        if (UploadHeapState[level][1] < NumResource)
+        {
+            int offset;
+            if (!UploadHeapDeadLists[level].empty())
+            {
+                offset = UploadHeapDeadLists[level].back();
+                UploadHeapDeadLists[level].pop_back();
+            }
+            else
+                offset = UploadHeapState[level][1];
+            ThrowIfFailed(Device->CreatePlacedResource(
+                UploadHeaps[level].Get()
+                , offset* SizeResource
+                , &CD3DX12_RESOURCE_DESC::Buffer(BufferSize)
+                , D3D12_RESOURCE_STATE_GENERIC_READ
+                , nullptr
+                , IID_PPV_ARGS(&Tex)));
+            UploadHeapState[level][1]++;//这个Heap存Resource的数量
+            ID.HeapIndex = level;
+            ID.HeapOffset = offset;
+            return ID;
+        }
+        return ID;
+    }
+    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource* Tex, D3D12_RESOURCE_DESC* TextureDesc) {
+        UINT currentSize = minSizeInKB*1000;
+        int level = 0;
+        ResourceID ID = { -1,-1 };
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT  TexLayouts = {};
+        UINT                                nNumRows = {};
+        UINT64                              n64RowSizeInBytes = {};
+        UINT64                              n64TotalBytes = 0;
+        Device->GetCopyableFootprints(TextureDesc, 0, 1, 0, &TexLayouts, &nNumRows, &n64RowSizeInBytes, &n64TotalBytes);
+        while (currentSize < n64TotalBytes) {
+            currentSize *= 2;
+            level++;
+        }
+        if (level > listNum - 1)
+            return ID;
+        int NumResource = pow(2, 3 - min(3, level));
+        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        if (DefaultHeapState[level][0] == 0)
+        {
+            DefaultHeapState[level][0] = 1;
+            D3D12_HEAP_DESC stDefaultHeapDesc = {  };
+            stDefaultHeapDesc.Alignment = 0;
+            stDefaultHeapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;		//上传堆类型
+            stDefaultHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+            stDefaultHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+            stDefaultHeapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+            stDefaultHeapDesc.SizeInBytes = SizeResource * NumResource;
+            ThrowIfFailed(Device->CreateHeap(&stDefaultHeapDesc, IID_PPV_ARGS(&DefaultHeaps[level])));
+        }
+        if (DefaultHeapState[level][1] < NumResource)
+        {
+            int offset;
+            if (!DefaultHeapDeadLists[level].empty())
+            {
+                offset = DefaultHeapDeadLists[level].back();
+                DefaultHeapDeadLists[level].pop_back();
+            }
+            else
+                offset = DefaultHeapState[level][1];
+            ThrowIfFailed(Device->CreatePlacedResource(
+                DefaultHeaps[level].Get()
+                , offset * SizeResource
+                , TextureDesc
+                , D3D12_RESOURCE_STATE_GENERIC_READ
+                , nullptr
+                , IID_PPV_ARGS(&Tex)));
+            DefaultHeapState[level][1]++;
+            ID.HeapIndex = level;
+            ID.HeapOffset = offset;
+            return ID;
+        }
+        return ID;
+    }
+private:
+    ID3D12Device4* Device;
+    std::vector<ComPtr<ID3D12Heap>>UploadHeaps;
+    std::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
+    std::vector<int>* UploadHeapDeadLists;
+    std::vector<int>* DefaultHeapDeadLists;
+    UINT minSizeInKB;
+    UINT listNum;
+    std::vector<int>*UploadHeapState;
+    std::vector<int>*DefaultHeapState;
+};
 class ResourceItem {
 
 };
@@ -96,12 +476,19 @@ public:
         {
             return;
         }
-        CreateDDSTextureFromFile12(device, cmdlist, fileName, Texture, TextureUpload);
+        CreateDDSTextureFromFile12(device, cmdlist, fileName, Texture, TextureUpload);//这个库函数是用提交方式创建的，所以我们就让系统自己管理贴图资源,函数过程：loadDDS（）获得上传资源大小和已经创建好的默认堆资源，以及subresource，之后创建上传堆资源，之后updatesubresource
     }
-    void createWritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear) {
+    void createNON_RT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear,NON_RT_DS_TextureSegregatedFreeLists*sfl) {
         if (isSticker)
             return;
-        device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), flag, TextureDesc, D3D12_RESOURCE_STATE_GENERIC_READ, dsclear, IID_PPV_ARGS(&Texture));
+        NON_RT_DS_SFL = sfl;
+       ID= NON_RT_DS_SFL->createPlacedResourceInDefaultSFL(Texture.Get(), TextureDesc);
+    }
+    void createRT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear, RT_DS_TextureSegregatedFreeLists* sfl) {
+        if (isSticker)
+            return;
+        RT_DS_SFL = sfl;
+        ID = RT_DS_SFL->createPlacedResourceInDefaultSFL(&Texture, TextureDesc,flag,dsclear);
     }
     void createSRVforResourceItem(D3D12_SHADER_RESOURCE_VIEW_DESC* srvDesc, ID3D12Device4* device, UINT SRVOffsetInHeap) {
         srvDesc->Format = Texture->GetDesc().Format;
@@ -156,6 +543,9 @@ public:
     ID3D12DescriptorHeap* RTVHeap = nullptr;
     ID3D12DescriptorHeap* DSVHeap = nullptr;
     ID3D12DescriptorHeap* SRVUAVHeap = nullptr;
+    NON_RT_DS_TextureSegregatedFreeLists* NON_RT_DS_SFL = nullptr;
+    RT_DS_TextureSegregatedFreeLists* RT_DS_SFL = nullptr;
+    ResourceID ID;
     int RTVoffset;
     int DSVoffset;
     std::vector<int>SRVOffsetList;
@@ -172,34 +562,34 @@ template<class T>
 class BufferResourceItem :ResourceItem {//管理cbv以及对应结构体以及资源本身,构造函数创建资源，并map，更新函数可以memcpy更新，但创建完资源项得自行创建CBV并赋值偏移量
 public:
     BufferResourceItem() = default;
-    BufferResourceItem(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap) {
-        init(device, cmdlist, strP, isstatic, cbvheap);
+    BufferResourceItem(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap,uploadBuddySystem*upBS,defaultBuddySystem*defBS) {
+        init(device, cmdlist, strP, isstatic, cbvheap,upBS,defBS);
     }
-    void init(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap) {
+    void init(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap, uploadBuddySystem* upbs, defaultBuddySystem* defbs) {
         this->isStatic = isstatic;
         this->CBVHeap = cbvheap;
+        this->upBS = upbs;
+        this->defBS = defbs;
         CBVoffset = HeapOffsetTable[CBVHeap];
         SRVCBVUAVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         this->str = *strP;
         D3D12_RANGE range = { 0,0 };
-        strSize = sizeof(T);
+        strSize = sizeof(T) + 255 & ~255;
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
-        cbvDesc.SizeInBytes = sizeof(T) + 255 & ~255;
+        cbvDesc.SizeInBytes = strSize;
         if (isStatic) {
-            ThrowIfFailed(device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(sizeof(T) + 255 & ~255), D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBufferDefault)));
-            constantBufferUpload->Map(0, &range, reinterpret_cast<void**>(&cbmapped));
-            memcpy(cbmapped, &str, strSize);
+           defID= defBS->createPlacedBufferResourceInBS(&constantBufferDefault, device,strSize);
+           upID= upBS->createPlacedBufferResourceInBS(&constantBufferUpload, device,strSize);
             D3D12_SUBRESOURCE_DATA subResourceData;
             subResourceData.pData = &str;
             subResourceData.RowPitch = strSize;
             subResourceData.SlicePitch = subResourceData.RowPitch;
-            UpdateSubresources<1>(cmdlist, constantBufferDefault.Get(), constantBufferUpload.Get(), 0, 0, 1, &subResourceData);
+            UpdateSubresources<1>(cmdlist, constantBufferDefault.Get(), constantBufferUpload.Get(), 0, 0, 1, &subResourceData);//这个函数只需先创建两个资源，然后他会帮你完成Map memcpy、unmap copyregion等操作
             cbvDesc.BufferLocation = constantBufferDefault->GetGPUVirtualAddress();
-
+            //upBS->free(upID);//不要释放上传堆，他还有用
         }
         else {
-
-            ThrowIfFailed(device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(sizeof(T) + 255 & ~255), D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBufferUpload)));
+            upID=upBS->createPlacedBufferResourceInBS(&constantBufferUpload, device, strSize);
             constantBufferUpload->Map(0, &range, reinterpret_cast<void**>(&cbmapped));
             memcpy(cbmapped, &str, strSize);
             cbvDesc.BufferLocation = constantBufferUpload->GetGPUVirtualAddress();
@@ -223,6 +613,10 @@ public:
     int CBVoffset;
     T str;
     bool isStatic = true;
+    uploadBuddySystem* upBS = nullptr;
+    defaultBuddySystem* defBS = nullptr;
+    buddyID upID;
+    buddyID defID;
 private:
     byte* cbmapped = nullptr;
     UINT SRVCBVUAVincrementSize;
@@ -236,14 +630,14 @@ public:
     ~GeometryItem() {
         freeVertexAndIndex();
     }
-    void createDynamicGeo(ID3D12Device4* device, bool isStatic, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices) {
+    void createDynamicGeo(ID3D12Device4* device, bool isStatic, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
         this->vertices = vertices;
         this->indices = indices;
         vbsize = (UINT)sizeof(Vertex) * (UINT)vertices->size();
         ibsize = (UINT)sizeof(std::uint16_t) * (UINT)indices->size();
-        device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(vbsize), D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&VertexBufferUpload));//顶点缓冲及索引缓冲初始状态为common效率最佳
+        upBS->createPlacedBufferResourceInBS(&VertexBufferUpload, device, vbsize);//顶点缓冲及索引缓冲初始状态为common效率最佳
 
-        device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(ibsize), D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&IndexBufferUpload));
+        upBS->createPlacedBufferResourceInBS(&IndexBufferUpload, device, ibsize);
 
         UINT8* vmapped = nullptr;UINT8* imapped = nullptr;
         D3D12_RANGE range = { 0,0 };
@@ -263,11 +657,11 @@ public:
             ibv.BufferLocation = IndexBufferUpload->GetGPUVirtualAddress();
         }
     }
-    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices) {//这之后必须excute
-        createDynamicGeo(device, true, vertices, indices);
-        device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(vbsize), D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&VertexBufferDefault));
+    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
+        createDynamicGeo(device, true, vertices, indices,upBS);
+        defBS->createPlacedBufferResourceInBS(&VertexBufferDefault, device, vbsize);
 
-        device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(ibsize), D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&IndexBufferDefault));
+        defBS->createPlacedBufferResourceInBS(&IndexBufferDefault, device, ibsize);
         D3D12_SUBRESOURCE_DATA subResourceData;
         subResourceData.pData = vertices->data();
         subResourceData.RowPitch = vbsize;
@@ -310,10 +704,10 @@ private:
 };
 struct RenderItem {
     RenderItem() = default;
-    RenderItem(GeometryItem* geo, int instancenum, int basevertex, int startindex, int indexnum, int startinstance, D3D12_PRIMITIVE_TOPOLOGY primitive, objectconstant* objc, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* CBVHeap) {
-        init(geo, instancenum, basevertex, startindex, indexnum, startinstance, primitive, objc, device, cmdlist, CBVHeap);
+    RenderItem(GeometryItem* geo, int instancenum, int basevertex, int startindex, int indexnum, int startinstance, D3D12_PRIMITIVE_TOPOLOGY primitive, objectconstant* objc, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* CBVHeap, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {
+        init(geo, instancenum, basevertex, startindex, indexnum, startinstance, primitive, objc, device, cmdlist, CBVHeap,upBS,defBS);
     }
-    void init(GeometryItem* geo, int instancenum, int basevertex, int startindex, int indexnum, int startinstance, D3D12_PRIMITIVE_TOPOLOGY primitive, objectconstant* objc, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* CBVHeap) {
+    void init(GeometryItem* geo, int instancenum, int basevertex, int startindex, int indexnum, int startinstance, D3D12_PRIMITIVE_TOPOLOGY primitive, objectconstant* objc, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* CBVHeap, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {
         Geo = geo;
         InstanceNum = instancenum;
         baseVertex = basevertex;
@@ -321,7 +715,7 @@ struct RenderItem {
         indexNum = indexnum;
         startInstance = startinstance;
         Primitive = primitive;
-        auto ptr = std::make_unique< BufferResourceItem<objectconstant>>(device, cmdlist, objc, false, CBVHeap);//让渲染项管理一个资源项
+        auto ptr = std::make_unique< BufferResourceItem<objectconstant>>(device, cmdlist, objc, true, CBVHeap,upBS,defBS);//让渲染项管理一个资源项
         objconstantRI = std::move(ptr);
     }
     std::unique_ptr< BufferResourceItem<objectconstant>>objconstantRI;

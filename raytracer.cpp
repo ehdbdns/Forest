@@ -137,7 +137,7 @@ public:
     FirstAPP() = default;
     void init(HINSTANCE hInstance, int       nCmdShow);
     void startRender();
-
+    void createMemoryManager();
     void createDescriptorHeap();
     void createCommandQueueAndSwapChain();
     void createRootSignature();
@@ -214,6 +214,10 @@ private:
     std::unordered_map<std::string, std::unique_ptr< SamplerResourceItem>>SamplerResourceItemTable;
     std::unordered_map<std::string, std::unique_ptr< RootSignatureItem>>RootSignatureItemTable;
     std::unordered_map<std::string, ComPtr<ID3D12PipelineState>>PSOTable;
+    std::unordered_map<std::string, std::unique_ptr< RT_DS_TextureSegregatedFreeLists>>RTDSSFLTable;
+    std::unordered_map<std::string, std::unique_ptr< NON_RT_DS_TextureSegregatedFreeLists>>NONRTDSSFLTable;
+    std::unordered_map<std::string, std::unique_ptr< uploadBuddySystem>>upBSTable;
+    std::unordered_map<std::string, std::unique_ptr< defaultBuddySystem>>defBSTable;
 };
 void FirstAPP::init(HINSTANCE hInstance, int       nCmdShow) {
     initDX12(hInstance, WndProc, nCmdShow);
@@ -222,6 +226,7 @@ void FirstAPP::init(HINSTANCE hInstance, int       nCmdShow) {
     createRootSignature();
     createCommandList();
     compileShadersAndCreatePSO();
+    createMemoryManager();
     createDepthBufferAndSampler();
     createGeometryItemAndRenderItem();
     createResourceItem();
@@ -388,6 +393,16 @@ void FirstAPP::compileShadersAndCreatePSO() {
         PSOTable["default"] = pIPipelineState;
     }
 }
+void FirstAPP::createMemoryManager() {
+  auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 4, pID3DDevice.Get());
+  RTDSSFLTable["RTDS"] = std::move(RTDSsfl);
+
+  auto upBS = std::make_unique<uploadBuddySystem>(1024, 5, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
+  upBSTable["default"] = std::move(upBS);
+
+  auto defBS = std::make_unique<defaultBuddySystem>(1024, 5, pID3DDevice.Get());
+  defBSTable["default"] = std::move(defBS);
+}
 void FirstAPP::createDepthBufferAndSampler() {
     //创建深度缓冲及其资源项
     D3D12_RESOURCE_DESC dsdesc = {};
@@ -412,7 +427,7 @@ void FirstAPP::createDepthBufferAndSampler() {
     dsclear.DepthStencil.Depth = 1.0f;
     dsclear.DepthStencil.Stencil = 0;
     auto DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false);
-    DSRI->createWritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, D3D12_HEAP_FLAG_NONE, &dsclear);
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, D3D12_HEAP_FLAG_NONE, &dsclear,RTDSSFLTable["RTDS"].get());
     DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
     TextureResourceItemTable["DS"] = std::move(DSRI);
 
@@ -469,29 +484,33 @@ void FirstAPP::createGeometryItemAndRenderItem() {
     };
     //创建几何项以及渲染项
     //几何项
+    auto upBS = upBSTable["default"].get();
+    auto defBS = defBSTable["default"].get();
     auto planeGeo = std::make_unique<GeometryItem>();
-    planeGeo->createStaticGeo(pID3DDevice.Get(), pIcmdlistpre.Get(), &planev, &planei);
+    planeGeo->createStaticGeo(pID3DDevice.Get(), pIcmdlistpre.Get(), &planev, &planei,upBS,defBS);
     GeometryItemTable["plane"] = std::move(planeGeo);
     //渲染项
     objectconstant objc;
     XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0)));
-    auto planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get());
+    auto planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS,defBS);
     RenderItemTable["plane0"] = std::move(planeRi);
     XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(114, 0, 0)));
-    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get());
+    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
     RenderItemTable["plane1"] = std::move(planeRi);
     XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(228, 0, 0)));
-    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get());
+    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
     RenderItemTable["plane2"] = std::move(planeRi);
     XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(342, 0, 0)));
-    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get());
+    planeRi = std::make_unique<RenderItem>(GeometryItemTable["plane"].get(), 1, 0, 0, planei.size(), 0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
     RenderItemTable["plane3"] = std::move(planeRi);
 }
 void FirstAPP::createResourceItem() {
     //创建纹理资源以及缓冲资源
      //创建资源项
+    auto upBS = upBSTable["default"].get();
+    auto defBS = defBSTable["default"].get();
     passconstant passc;
-    auto passBRI = std::make_unique<BufferResourceItem<passconstant>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &passc, false, pIpresrvheap.Get());
+    auto passBRI = std::make_unique<BufferResourceItem<passconstant>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &passc, false, pIpresrvheap.Get(), upBS, defBS);
     BufferResourceItemTable["pass"] = std::move(passBRI);
 
     auto grassTRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, true);
@@ -697,7 +716,7 @@ void FirstAPP::startRenderLoop() {
                     if (GetAsyncKeyState('A') & 0x8000)
                     {
                         WriteConsole(g_hOutput, "a", 2, NULL, NULL);
-                        eyepos = eyepos - right * k;
+                        eyepos = eyepos - right * k*7;
 
                     }
                     if (GetAsyncKeyState('S') & 0x8000)
@@ -708,7 +727,7 @@ void FirstAPP::startRenderLoop() {
                     if (GetAsyncKeyState('D') & 0x8000)
                     {
                         WriteConsole(g_hOutput, "d", 2, NULL, NULL);
-                        eyepos = eyepos + right * k;
+                        eyepos = eyepos + right * k*7;
 
                     }
                     if (rotationAngle >= XM_2PI)
