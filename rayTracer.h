@@ -7,41 +7,251 @@
 #define GRS_UPPER(A,B) ((UINT)(((A)+((B)-1))&~(B - 1)))
 HANDLE g_hOutput = 0;
 std::unordered_map<ID3D12DescriptorHeap*, UINT>HeapOffsetTable;
-meshdata subvide(meshdata mesh, int vsize, int isize) {//传入正十二面体顶点，创建球的顶点
-    std::vector<XMFLOAT3> vertices;
-    std::vector<std::uint16_t> indices;
-    for (int meshindex = 1;meshindex <= (isize / 3);meshindex++) {
-        int a = mesh.indices[(meshindex - 1) * 3];//每个面源的点索引
-        int b = mesh.indices[(meshindex - 1) * 3 + 1];
-        int c = mesh.indices[(meshindex - 1) * 3 + 2];
-        XMFLOAT3 v1 = XMFLOAT3{ (mesh.vertices[a].x + mesh.vertices[b].x) / 2,(mesh.vertices[a].y + mesh.vertices[b].y) / 2,(mesh.vertices[a].z + mesh.vertices[b].z) / 2 };
-        XMFLOAT3 v2 = XMFLOAT3{ (mesh.vertices[b].x + mesh.vertices[c].x) / 2,(mesh.vertices[b].y + mesh.vertices[c].y) / 2,(mesh.vertices[b].z + mesh.vertices[c].z) / 2 };
-        XMFLOAT3 v3 = XMFLOAT3{ (mesh.vertices[a].x + mesh.vertices[c].x) / 2,(mesh.vertices[a].y + mesh.vertices[c].y) / 2,(mesh.vertices[a].z + mesh.vertices[c].z) / 2 };
-        vertices.push_back(mesh.vertices[a]);//0
-        vertices.push_back(mesh.vertices[b]);//1
-        vertices.push_back(mesh.vertices[c]);//2
-        vertices.push_back(v1);//3
-        vertices.push_back(v2);//4
-        vertices.push_back(v3);//5
-        int k = (meshindex - 1) * 6;
-        indices.push_back(3 + k);
-        indices.push_back(1 + k);
-        indices.push_back(4 + k);
-        indices.push_back(0 + k);
-        indices.push_back(3 + k);
-        indices.push_back(5 + k);
-        indices.push_back(3 + k);
-        indices.push_back(4 + k);
-        indices.push_back(5 + k);
-        indices.push_back(5 + k);
-        indices.push_back(4 + k);
-        indices.push_back(2 + k);
-    }
-    meshdata ret;
-    ret.vertices = vertices;
-    ret.indices = indices;
-    return ret;
+
+
+namespace EST {
+
+    struct Block {
+        Block* next = nullptr;
+    };
+
+    class allocator {
+    public:
+        allocator() = default;
+        allocator(UINT pagesize, UINT dividecount) {
+            pageSize = pagesize;
+            divideCount = dividecount;
+            ptr = operator new (pageSize);//申请一大块内存
+            BlockSize = pageSize / pow(2, divideCount);//一个block占多大
+            freeList = reinterpret_cast<Block*>(ptr);//让freeList存储大块内存的首地址，并将第一个block的开头一小部分用于存储next指针
+            std::uint8_t* p = reinterpret_cast<std::uint8_t*>(ptr);
+            for (int j = 1;j < pow(2, divideCount);j++) {//将所有block加入freelist
+                p += BlockSize;
+                Block* b;
+                b = reinterpret_cast<Block*>(p);
+                b->next = freeList;
+                freeList = b;
+                freeNum++;
+            }
+        }
+        void* allocate() {
+            if (freeNum > 0) {
+                Block* b = freeList;
+                freeList = b->next;
+                freeNum--;
+                return (void*)b;
+            }
+            return nullptr;
+        }
+        void free(void* freeBlock) {
+            Block* b = reinterpret_cast<Block*>(freeBlock);
+            b->next = freeList;
+            freeList = b;
+            freeNum++;
+        }
+        void freeAll() {
+
+        }
+        void* getPTR() {//获得大块内存的首地址
+            return ptr;
+
+        }
+        UINT divideCount;
+    private:
+        Block* freeList;
+        int freeNum;
+
+        UINT BlockSize;
+        UINT pageSize;
+        void* ptr = nullptr;
+    };
+    struct Page {
+    public:
+        Page* next = nullptr;
+        allocator* alloc = nullptr;
+    };
+    class MemoryManager {
+    public:
+        MemoryManager() = default;
+        MemoryManager(UINT pageSizeInKB, UINT maxdividenum) {
+            PageSize = pageSizeInKB * 1000;
+            MaxDivideNum = maxdividenum;
+            PageList = nullptr;
+            for (int i = 0;i < maxdividenum;i++)
+                allocPage(i);
+        }
+        Page* allocPage(int PageDivideNum) {
+            allocator* alloc = new allocator(PageSize, PageDivideNum);
+            Page* p = reinterpret_cast<Page*>(reinterpret_cast<std::uint8_t*>(alloc->getPTR()) + sizeof(Block));
+            p->alloc = alloc;
+            p->next = PageList;
+            PageList = p;
+            PageNum++;
+            return p;
+        }
+        void freePage(void* freepage, UINT size) {
+            Page* p = reinterpret_cast<Page*>(freepage);
+            Page* it = PageList;
+            Page* preit = nullptr;
+            for (int i = 0;i < PageNum;i++) {
+                if ((void*)it == freepage) {
+                    preit->next = it->next;
+                    it->alloc->freeAll();
+                    break;
+                }
+                preit = it;
+                it = it->next;
+            }
+        }
+        void* alloc(UINT MSize,allocator**alloc) {
+            int level = 0;
+            int currentSize = PageSize / pow(2, MaxDivideNum);
+            while (MSize > currentSize) {
+                level++;
+                currentSize *= 2;
+            }
+            Page* p = PageList;
+            void* m;
+            while (1) {
+                if (p->next == nullptr) {
+                   p=allocPage(MaxDivideNum - level - 1);
+                   m = p->alloc->allocate();
+                    break;
+                }
+                if (p->alloc->divideCount == MaxDivideNum - level - 1) {
+                    m= p->alloc->allocate();
+                    if (m == nullptr) {
+                        p = p->next;
+                        continue;
+                    }
+                    break;
+                }
+                p = p->next;
+            }
+            *alloc= p->alloc;
+            return m;
+        }
+
+    private:
+        UINT MaxDivideNum;
+        Page* PageList = nullptr;
+        UINT PageSize;
+        UINT PageNum = 0;
+    };
+    EST::MemoryManager* memorymanager = new EST::MemoryManager(1024, 5);
+    template<class T>
+    class vector {
+    public:
+        vector() {
+            init();
+        }
+
+        vector(T* startInit, int size) {
+            init();
+            resize(size);
+            for (int i = 0;i < Size;i++) {
+                data[i] = *startInit;
+                startInit++;
+            }
+        }
+        void init() {
+            StyleSizeInBytes = sizeof(T);
+            MM = memorymanager;
+        }
+        void reserve(int cap) {
+            int MemorySize = cap * StyleSizeInBytes;
+            T* preBegin = begin;
+            T* preit =begin;
+           begin= reinterpret_cast<T*>( MM->alloc(MemorySize,&alloc));
+           data = new(begin)T[cap];
+           if (capacity > 0) {
+               for (int i = 0;i < capacity;i++) {
+                   data[i] = *preit;
+                   preit++;
+               }
+               alloc->free(preBegin);
+           }
+           capacity = cap;
+        }
+        void resize(int size) {
+            if (size > capacity)
+                reserve(2*size);
+            end = begin + size-1;
+            Size = size;
+        }
+        void memset(T* start, int size,T obj) {
+            for (int i = 0;i < size;i++)
+                data[start-begin+i] = obj;
+        }
+        void push_back(T obj) {
+            Size += 1;
+            if (Size > capacity)
+                resize(Size);
+            T* push_pos =end;
+            *push_pos = obj;
+            end++;
+        }
+        T& operator[](int index) {
+            if (index > Size - 1)
+                abort();
+            return data[index];
+      }
+        int size() {
+            return Size;
+        }
+        bool empty() {
+            if (Size == 0)
+                return true;
+            return false;
+        }
+        T back() {
+            return *(end-1);
+        }
+        void pop_back() {
+            Size--;
+            end--;
+            //if (Size < (capacity / 2))
+            //    reserve(capacity / 2);
+        }
+        void erase(T* erasebegin, T* eraseend, T obj) {
+            for (int i = 0;i < eraseend - erasebegin;i++) {
+                if (obj == *(erasebegin + i)) {
+                    for (int j = 0;j < Size - 1-(erasebegin+i-begin);j++)
+                        *(erasebegin + i+j) = *(erasebegin + i + 1+j);
+                    Size--;
+                    end--;
+                    return;
+                }
+            }
+        }
+        void clear() {
+            Size = 0;
+            end = begin;
+        }
+        T* getbegin() {
+            return begin;
+        }
+        T* getend() {
+            return end;
+        }
+        T* Getdata() {
+            return data;
+        }
+        void insert(int index, T obj) {
+            
+        }
+    private:
+        T* data;
+        allocator* alloc;
+        MemoryManager* MM;
+        int StyleSizeInBytes;
+        int Size=0;
+        int capacity=0;
+        T* begin;
+        T* end;
+    };
 }
+
 struct Vertex
 {
     XMFLOAT4 position;
@@ -69,9 +279,11 @@ public:
         totalSize = totalSizeInKB * 1024;
         Hierarchy = hierarchy;
         minSize = totalSize / pow(2, hierarchy - 1);
-        stateList = new std::vector<int>[hierarchy];
+        stateList = new EST::vector<int>[hierarchy];
         for (int i = 0;i < hierarchy;i++) {
-            stateList[i].resize(pow(2, hierarchy - i + 1));
+            int num = pow(2, hierarchy - i + 1);
+            stateList[i].resize(num);
+            stateList[i].memset(stateList[i].Getdata(), num, 0);
         }
     }
    buddyID createPlacedBufferResourceInBS(ID3D12Resource** BufferResource, ID3D12Device4* device, UINT BufferSize) {
@@ -134,7 +346,7 @@ public:
                 stateList[j][ID.index * pow(2, ID.level - j) + k] = 0;
         }
     }
-    std::vector<int>* stateList;
+    EST::vector<int>* stateList;
     UINT totalSize;
     UINT minSize;
     UINT Hierarchy;
@@ -215,11 +427,11 @@ public:
         listNum = listnum;
         Device = device;
         DefaultHeaps.resize(listNum);
-        DefaultHeapDeadLists = new std::vector<int>[listnum];
-        DefaultHeapState = new std::vector<int>[listnum];
+        DefaultHeapDeadLists = new EST::vector<int>[listnum];
+        DefaultHeapState = new EST::vector<int>[listnum];
         for (int i = 0;i < listnum;i++) {
             DefaultHeapState[i].resize(2);
-            DefaultHeapState[i] = {0,0};
+            DefaultHeapState[i].memset(DefaultHeapState[i].Getdata(), 2, 0);
         }
     }
     ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear) {
@@ -277,11 +489,11 @@ public:
     }
 private:
     ID3D12Device4* Device;
-    std::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
+    EST::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
     UINT minSizeInKB;
     UINT listNum;
-    std::vector<int>(* DefaultHeapDeadLists);
-    std::vector<int>(* DefaultHeapState);
+    EST::vector<int>(* DefaultHeapDeadLists);
+    EST::vector<int>(* DefaultHeapState);
 };
 class NON_RT_DS_TextureSegregatedFreeLists :SegregatedFreeLists {
 public:
@@ -309,15 +521,15 @@ public:
         Device = device;
         UploadHeaps.resize(listNum);
         DefaultHeaps.resize(listNum);
-        UploadHeapState = new std::vector<int>[listnum];
-        DefaultHeapState = new std::vector<int>[listnum];
-        UploadHeapDeadLists = new std::vector<int>[listnum];
-        DefaultHeapDeadLists = new std::vector<int>[listnum];
+        UploadHeapState = new EST::vector<int>[listnum];
+        DefaultHeapState = new EST::vector<int>[listnum];
+        UploadHeapDeadLists = new EST::vector<int>[listnum];
+        DefaultHeapDeadLists = new EST::vector<int>[listnum];
         for (int i = 0;i < listnum;i++) {
             UploadHeapState[i].resize(2);
-            UploadHeapState[i] = {0,0};
             DefaultHeapState[i].resize(2);
-            DefaultHeapState[i] = { 0,0 };
+            UploadHeapState[i].memset(UploadHeapState[i].Getdata(), 2, 0);
+            DefaultHeapState[i].memset(DefaultHeapState[i].Getdata(), 2, 0);
         }
     }
     ResourceID createPlacedResourceInUploadTexSFLHeap(ID3D12Resource*Tex,UINT BufferSize) {
@@ -423,14 +635,14 @@ public:
     }
 private:
     ID3D12Device4* Device;
-    std::vector<ComPtr<ID3D12Heap>>UploadHeaps;
-    std::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
-    std::vector<int>* UploadHeapDeadLists;
-    std::vector<int>* DefaultHeapDeadLists;
+    EST::vector<ComPtr<ID3D12Heap>>UploadHeaps;
+    EST::vector<ComPtr<ID3D12Heap>>DefaultHeaps;
+    EST::vector<int>* UploadHeapDeadLists;
+    EST::vector<int>* DefaultHeapDeadLists;
     UINT minSizeInKB;
     UINT listNum;
-    std::vector<int>*UploadHeapState;
-    std::vector<int>*DefaultHeapState;
+    EST::vector<int>*UploadHeapState;
+    EST::vector<int>*DefaultHeapState;
 };
 class ResourceItem {
 
@@ -548,8 +760,8 @@ public:
     ResourceID ID;
     int RTVoffset;
     int DSVoffset;
-    std::vector<int>SRVOffsetList;
-    std::vector<int>UAVOffsetList;
+    EST::vector<int>SRVOffsetList;
+    EST::vector<int>UAVOffsetList;
 private:
     bool isSticker = true;
     UINT SRVUAVincrementSize;
@@ -630,7 +842,7 @@ public:
     ~GeometryItem() {
         freeVertexAndIndex();
     }
-    void createDynamicGeo(ID3D12Device4* device, bool isStatic, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
+    void createDynamicGeo(ID3D12Device4* device, bool isStatic, EST::vector<Vertex>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
         this->vertices = vertices;
         this->indices = indices;
         vbsize = (UINT)sizeof(Vertex) * (UINT)vertices->size();
@@ -644,8 +856,8 @@ public:
         VertexBufferUpload->Map(0, &range, reinterpret_cast<void**>(&vmapped));
         IndexBufferUpload->Map(0, &range, reinterpret_cast<void**>(&imapped));
 
-        memcpy(vmapped, vertices->data(), vbsize);
-        memcpy(imapped, indices->data(), ibsize);
+        memcpy(vmapped, vertices->Getdata(), vbsize);
+        memcpy(imapped, indices->Getdata(), ibsize);
         VertexBufferUpload->Unmap(0, nullptr);
         IndexBufferUpload->Unmap(0, nullptr);
         if (!isStatic) {
@@ -657,17 +869,17 @@ public:
             ibv.BufferLocation = IndexBufferUpload->GetGPUVirtualAddress();
         }
     }
-    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, std::vector<Vertex>* vertices, std::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
+    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, EST::vector<Vertex>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
         createDynamicGeo(device, true, vertices, indices,upBS);
         defBS->createPlacedBufferResourceInBS(&VertexBufferDefault, device, vbsize);
 
         defBS->createPlacedBufferResourceInBS(&IndexBufferDefault, device, ibsize);
         D3D12_SUBRESOURCE_DATA subResourceData;
-        subResourceData.pData = vertices->data();
+        subResourceData.pData = vertices->Getdata();
         subResourceData.RowPitch = vbsize;
         subResourceData.SlicePitch = subResourceData.RowPitch;
         UpdateSubresources<1>(cmdlist, VertexBufferDefault.Get(), VertexBufferUpload.Get(), 0, 0, 1, &subResourceData);
-        subResourceData.pData = indices->data();
+        subResourceData.pData = indices->Getdata();
         subResourceData.RowPitch = ibsize;
         subResourceData.SlicePitch = subResourceData.RowPitch;
         UpdateSubresources<1>(cmdlist, IndexBufferDefault.Get(), IndexBufferUpload.Get(), 0, 0, 1, &subResourceData);
@@ -692,8 +904,8 @@ private:
     UINT vbsize;
     UINT ibsize;
     UINT indexNum;
-    std::vector<Vertex>* vertices;
-    std::vector<std::uint16_t>* indices;
+    EST::vector<Vertex>* vertices;
+    EST::vector<std::uint16_t>* indices;
     D3D12_VERTEX_BUFFER_VIEW vbv;
     D3D12_INDEX_BUFFER_VIEW ibv;
     ComPtr< ID3D12Resource> VertexBufferDefault;
@@ -770,10 +982,10 @@ private:
     int CBVNum;
     int UAVNum;
     int SamplerNum;
-    std::vector<int>SRVDescriptorTableIndex;
-    std::vector<int>CBVDescriptorTableIndex;
-    std::vector<int>UAVDescriptorTableIndex;
-    std::vector<int>SamplerDescriptorTableIndex;
+    EST::vector<int>SRVDescriptorTableIndex;
+    EST::vector<int>CBVDescriptorTableIndex;
+    EST::vector<int>UAVDescriptorTableIndex;
+    EST::vector<int>SamplerDescriptorTableIndex;
 };
 void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objcPara) {
     CD3DX12_GPU_DESCRIPTOR_HANDLE objcHandle = ri->objconstantRI->getCBVGPU();

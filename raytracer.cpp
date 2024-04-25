@@ -137,7 +137,7 @@ public:
     FirstAPP() = default;
     void init(HINSTANCE hInstance, int       nCmdShow);
     void startRender();
-    void createMemoryManager();
+    void createVideoMemoryManager();
     void createDescriptorHeap();
     void createCommandQueueAndSwapChain();
     void createRootSignature();
@@ -169,12 +169,12 @@ private:
     UINT nFrame = 0;
   
     UINT nRTVDescriptorSize = 0U;
-    std::vector<threadparas> paras;
-    std::vector<int> existThreadList;
-    std::vector<int> deadThreadList;
+    EST::vector<threadparas> paras;
+    EST::vector<int> existThreadList;
+    EST::vector<int> deadThreadList;
 
-    std::vector<HANDLE> HandleMessage[4];
-    std::vector<ID3D12CommandList*>cmdlists;
+    EST::vector<HANDLE> HandleMessage[4];
+    EST::vector<ID3D12CommandList*>cmdlists;
     float fAspectRatio = 3.0f;
     float rotationAngle = 0.0f;
 
@@ -226,7 +226,7 @@ void FirstAPP::init(HINSTANCE hInstance, int       nCmdShow) {
     createRootSignature();
     createCommandList();
     compileShadersAndCreatePSO();
-    createMemoryManager();
+    createVideoMemoryManager();
     createDepthBufferAndSampler();
     createGeometryItemAndRenderItem();
     createResourceItem();
@@ -393,7 +393,7 @@ void FirstAPP::compileShadersAndCreatePSO() {
         PSOTable["default"] = pIPipelineState;
     }
 }
-void FirstAPP::createMemoryManager() {
+void FirstAPP::createVideoMemoryManager() {
   auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 4, pID3DDevice.Get());
   RTDSSFLTable["RTDS"] = std::move(RTDSsfl);
 
@@ -448,7 +448,7 @@ void FirstAPP::createDepthBufferAndSampler() {
 }
 void FirstAPP::createGeometryItemAndRenderItem() {
     //顶点
-    std::vector<Vertex>planev = {
+     Vertex arrv[] = {
 {XMFLOAT4{-60.0f + 6,5,60.0f,1.0f},XMFLOAT2{0,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
 {XMFLOAT4{60.0f,5,60.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
 {XMFLOAT4{-60.0f + 6,5,-60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
@@ -465,6 +465,7 @@ void FirstAPP::createGeometryItemAndRenderItem() {
   {XMFLOAT4{-60.0f + 6,0,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
   {XMFLOAT4{60.0f,0,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0}
     };
+     EST::vector<Vertex>planev(arrv,12);
     for (int i = 0;i < 4;i++) {
         planev[i].color = XMFLOAT3{ 1.0f,0,0 };
         planev[i].normal = XMFLOAT3{ 0,1.0f,0 };
@@ -477,11 +478,12 @@ void FirstAPP::createGeometryItemAndRenderItem() {
         planev[i].color = XMFLOAT3{ 0.7f,0.7f,0.7f };
         planev[i].normal = XMFLOAT3{ 0,0,-1.0f };
     }
-    std::vector<std::uint16_t>planei = {
+   std::uint16_t arri[] = {
         0,1,2,2,1,3,
         4,5,6,6,5,7,
         8,9,10,10,9,11
     };
+   EST::vector<std::uint16_t>planei(arri, 18);
     //创建几何项以及渲染项
     //几何项
     auto upBS = upBSTable["default"].get();
@@ -598,10 +600,10 @@ void FirstAPP::startAndWaitNewThread(int newThreadNum) {
         ::ResumeThread(paras[threadNoteToStart].hThisThread);//线程~~启动！！
     }
     //等待线程初始化完成
-    ::MsgWaitForMultipleObjects(HandleMessage->size(), HandleMessage->data(), TRUE, INFINITE, QS_ALLINPUT);
+    ::MsgWaitForMultipleObjects(HandleMessage->size(), HandleMessage->Getdata(), TRUE, INFINITE, QS_ALLINPUT);
 }
 void FirstAPP::killThread(int threadNote) {
-    existThreadList.erase(std::find(std::begin(existThreadList), std::end(existThreadList), threadNote));
+    existThreadList.erase(existThreadList.getbegin(), existThreadList.getend(),threadNote);
     deadThreadList.push_back(threadNote);
     ::TerminateThread(
         paras[threadNote].hThisThread,NULL
@@ -634,7 +636,7 @@ void FirstAPP::startRenderLoop() {
         ThrowIfFailed(pIcmdlistpre->Close());
         //处理上传纹理以及buffer的指令
         cmdlists.push_back(pIcmdlistpre.Get());
-        pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.data());
+        pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.Getdata());
         n64fence = n64FenceValue;
         n64FenceValue++;
         pICommandQueue->Signal(pIFence.Get(), n64fence);
@@ -659,7 +661,7 @@ void FirstAPP::startRenderLoop() {
                     }
                 }
             }
-            dwRet = ::MsgWaitForMultipleObjects(HandleMessage->size(), HandleMessage->data(), TRUE, INFINITE, QS_ALLINPUT);//返回接受到事件在事件数组中索引,否则阻塞
+            dwRet = ::MsgWaitForMultipleObjects(HandleMessage->size(), HandleMessage->Getdata(), TRUE, INFINITE, QS_ALLINPUT);//返回接受到事件在事件数组中索引,否则阻塞
             UINT a = (UINT)(dwRet - WAIT_OBJECT_0);
             if ((a) == 0)
             {
@@ -676,7 +678,7 @@ void FirstAPP::startRenderLoop() {
                     nStates = 1;
                     cmdlists.clear();
                     cmdlists.push_back(pIcmdlistpre.Get());
-                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.data());
+                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.Getdata());
                     n64fence = n64FenceValue;
                     n64FenceValue++;
                     pICommandQueue->Signal(pIFence.Get(), n64fence);
@@ -797,7 +799,7 @@ void FirstAPP::startRenderLoop() {
                     nStates = 2;
                     cmdlists.clear();
                     cmdlists.push_back(pIcmdlistpre.Get());
-                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.data());
+                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.Getdata());
                     n64fence = n64FenceValue;
                     n64FenceValue++;
                     pICommandQueue->Signal(pIFence.Get(), n64fence);
@@ -833,7 +835,7 @@ void FirstAPP::startRenderLoop() {
                     for (int i = 0;i < ThreadNum;i++)
                         cmdlists.push_back(paras[existThreadList[i]].cmdlist);
                     cmdlists.push_back(pIcmdlistpost.Get());
-                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.data());
+                    pICommandQueue->ExecuteCommandLists(cmdlists.size(), cmdlists.Getdata());
                     ThrowIfFailed(pISwapChain3->Present(1, 0));
                     n64fence = n64FenceValue;
                     n64FenceValue++;
