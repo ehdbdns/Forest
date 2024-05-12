@@ -116,41 +116,15 @@ struct passconstant {
     XMFLOAT4X4 WinvT;
     XMFLOAT4X4 P;
     XMFLOAT4X4 S;
-    XMFLOAT3 lightPos;
-    float pad5;
-    XMFLOAT4X4 uvMAT;
-    XMFLOAT4X4 invP;
-    XMFLOAT4X4 invuvmat;
-    float* randnum;
-    // XMFLOAT4X4 offsetmat[58];
-    XMFLOAT4X4 finalmats[58];
+    UINT boxNum;
 };
 
 struct objectconstant {
     XMFLOAT4X4 world;
     XMFLOAT4X4 invTworld;
+    int texIndex;
+    int matIndex;
 };
-struct BVHnode {
-    BVHnode() {};
-    BVHnode(std::vector<BVHtriangle> triList, int facecount);
-    bool divide(int divType);
-    int faceCount;
-    std::vector<BVHtriangle>triangles;
-    BVHnode* left = nullptr;
-    BVHnode* right = nullptr;
-    BoundingBox box;
-};
-class BVHtree {
-public:
-    BVHtree() = default;
-    BVHtree(std::vector<BVHtriangle>triangles);//启动函数
-    void recurrence(BVHnode* node, int divtype);//递归函数
-    void rayIntersect(XMVECTOR rayOrigin, XMVECTOR rayDirection, BVHnode* node, float* tmin);
-    int nodenum;
-    int depth;
-    BVHnode* head;
-};
-
 
 struct modelVertex {
     XMFLOAT3 position;

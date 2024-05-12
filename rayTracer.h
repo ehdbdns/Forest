@@ -23,7 +23,8 @@ namespace EST {
             divideCount = dividecount;
             ptr = operator new (pageSize);//申请一大块内存
             BlockSize = pageSize / pow(2, divideCount);//一个block占多大
-            freeList = reinterpret_cast<Block*>(ptr);//让freeList存储大块内存的首地址，并将第一个block的开头一小部分用于存储next指针
+            freeList = reinterpret_cast<Block*>(ptr);
+            freeList->next = nullptr;//让freeList存储大块内存的首地址，并将第一个block的开头一小部分用于存储next指针
             std::uint8_t* p = reinterpret_cast<std::uint8_t*>(ptr);
             for (int j = 1;j < pow(2, divideCount);j++) {//将所有block加入freelist
                 p += BlockSize;
@@ -138,14 +139,16 @@ namespace EST {
         UINT PageSize;
         UINT PageNum = 0;
     };
-    EST::MemoryManager* memorymanager = new EST::MemoryManager(1024, 5);
+    EST::MemoryManager* memorymanager = new EST::MemoryManager(1024*1024, 10);
     template<class T>
     class vector {
     public:
         vector() {
             init();
         }
-
+        //~vector() {
+        //    free();
+        //}
         vector(T* startInit, int size) {
             init();
             resize(size);
@@ -153,6 +156,11 @@ namespace EST {
                 data[i] = *startInit;
                 startInit++;
             }
+        }
+        void free() {
+            if (this->alloc == nullptr)
+                return;
+            alloc->free((void*)data);
         }
         void init() {
             StyleSizeInBytes = sizeof(T);
@@ -169,7 +177,7 @@ namespace EST {
                    data[i] = *preit;
                    preit++;
                }
-               alloc->free(preBegin);
+               alloc->free((void*)preBegin);
            }
            capacity = cap;
         }
@@ -242,7 +250,7 @@ namespace EST {
         }
     private:
         T* data;
-        allocator* alloc;
+        allocator* alloc=nullptr;
         MemoryManager* MM;
         int StyleSizeInBytes;
         int Size=0;
@@ -261,6 +269,176 @@ struct Vertex
     float AOk = 0;
     XMFLOAT3 color;
 };
+struct AABBbox {
+    XMFLOAT3 center;
+    UINT isLeaf=0;
+    XMFLOAT3 extent;
+    int missIndex;
+    UINT triangleStart=-1;
+    UINT triangleNum=0;
+};
+struct triangle {
+    XMFLOAT3 pos1;
+    UINT matIndex;
+    XMFLOAT3 pos2;
+    UINT texIndex;
+    XMFLOAT3 pos3;
+    float pad1;
+    XMFLOAT3 g;
+    float pad2;
+    XMFLOAT3 n;
+    float pad3;
+    XMFLOAT4 uv12;
+    XMFLOAT2 uv3;
+};
+struct material {
+    XMFLOAT3 albedo;
+    float roughness;
+    XMFLOAT3 F0;
+};
+struct SAHnode {
+    SAHnode* left=nullptr;
+    SAHnode* right=nullptr;
+    BoundingBox box;
+    EST::vector<triangle>triangles;
+};
+int comparex(const void* a, const void* b)
+{
+    triangle first = *(triangle*)a;
+    triangle second = *(triangle*)b;
+    if (first.g.x < second.g.x)
+        return -1;
+    else
+        return 1;
+}
+int comparey(const void* a, const void* b)
+{
+    triangle first = *(triangle*)a;
+    triangle second = *(triangle*)b;
+    if (first.g.y < second.g.y)
+        return -1;
+    else
+        return 1;
+}
+int comparez(const void* a, const void* b)
+{
+    triangle first = *(triangle*)a;
+    triangle second = *(triangle*)b;
+    if (first.g.z < second.g.z)
+        return -1;
+    else
+        return 1;
+}
+class SAHtree {
+public:
+    SAHtree() = default;
+    void init(EST::vector<triangle>tris) {
+        head = new SAHnode;
+        head->triangles = tris;
+        BuildBoundingBox(head->box, tris.Getdata(), tris.size());
+        missIndexTable.resize(50);
+        missIndexTable.memset(missIndexTable.Getdata(), 50, -1);
+        divide(head,0,1);
+    }
+    void divide(SAHnode* node,int divtype,int d) {
+        if (missIndexTable[d - 1] == -1)
+            missIndexTable[d - 1] = boxNum;
+        else {
+            SortedBoxes[missIndexTable[d - 1]].missIndex = boxNum;
+            missIndexTable[d - 1] = boxNum;
+            int deeper = d;
+            while (missIndexTable[deeper] != -1) {
+                SortedBoxes[missIndexTable[deeper]].missIndex = boxNum;
+                missIndexTable[deeper] = -1;
+                deeper++;
+            }
+        }
+        boxNum++;
+        depth = max(depth, d);
+        AABBbox box;
+        box.center = node->box.Center;
+        box.extent = node->box.Extents;
+        box.triangleNum = node->triangles.size();
+        box.triangleStart = CurrentTriangleIndex;
+        if (node->triangles.size() < 5) {
+            box.isLeaf = 1;
+            leafBox.push_back(node->box);
+            CurrentTriangleIndex += box.triangleNum;
+            SortedBoxes.push_back(box);
+            for (int i = 0;i < node->triangles.size();i++)
+                Triangles.push_back((node->triangles)[i]);
+            return;
+        }
+        SortedBoxes.push_back(box);
+        SAHnode* left=new SAHnode;
+        SAHnode* right=new SAHnode;
+        float mincost = MathHelper::Infinity;
+        for (int i = 1;i < node->triangles.size();i++) {
+            SAHnode l;
+            SAHnode r;
+            EST::vector<triangle>lefttri(node->triangles.Getdata(), i);
+            EST::vector<triangle>righttri(&node->triangles.Getdata()[i], node->triangles.size() - i);
+            l.triangles = lefttri;
+            r.triangles = righttri;
+            float cost = calcCost(&l)+calcCost(&r);
+            if (cost < mincost) {
+                left->triangles.free();
+                right->triangles.free();
+                mincost = cost;
+                left->triangles = lefttri;
+                left->box = l.box;
+                right->box = r.box;
+                right->triangles = righttri;
+            }
+            else {
+                lefttri.free();
+                righttri.free();
+            }
+        }
+        node->left = left;
+        node->right = right;
+        divide(node->left,(divtype+1)%3,d+1);
+        divide(node->right, (divtype + 1) % 3,d+1);
+    }
+    float calcCost(SAHnode* node) {
+        BuildBoundingBox(node->box, node->triangles.Getdata(), node->triangles.size());
+        float S = 0;
+        S += 2 * node->box.Extents.x * 2 * node->box.Extents.y * 2;
+        S += 2 * node->box.Extents.y * 2 * node->box.Extents.z * 2;
+        S += 2 * node->box.Extents.z * 2 * node->box.Extents.x * 2;
+        return S * node->triangles.size();
+    }
+    void BuildBoundingBox(BoundingBox& box, triangle* triangles, int faceCount) {
+        XMFLOAT3 f3min = { +MathHelper::Infinity,+MathHelper::Infinity ,+MathHelper::Infinity };
+        XMFLOAT3 f3max = { -MathHelper::Infinity,-MathHelper::Infinity ,-MathHelper::Infinity };
+        XMVECTOR v3min = XMLoadFloat3(&f3min);
+        XMVECTOR v3max = XMLoadFloat3(&f3max);
+        for (int i = 0;i < faceCount;i++) {
+            XMVECTOR p1 = XMLoadFloat3(&triangles[i].pos1);
+            XMVECTOR p2 = XMLoadFloat3(&triangles[i].pos2);
+            XMVECTOR p3 = XMLoadFloat3(&triangles[i].pos3);
+            XMVECTOR mi = XMVectorMin(p1, p2);
+            mi = XMVectorMin(p1, p3);
+            v3min = XMVectorMin(v3min, mi);
+            XMVECTOR ma = XMVectorMax(p1, p2);
+            ma = XMVectorMax(p1, p3);
+            v3max = XMVectorMax(v3max, ma);
+        }
+        XMStoreFloat3(&box.Center, 0.5f * (v3min + v3max));
+        XMStoreFloat3(&box.Extents, 0.5f * (v3max - v3min));
+    }
+    int CurrentTriangleIndex = 0;
+    EST::vector<int>missIndexTable;
+    SAHnode* head;
+    int depth;
+    UINT boxNum=0;
+    EST::vector<BoundingBox>leafBox;
+    EST::vector<AABBbox>SortedBoxes;
+    EST::vector<triangle>Triangles;
+};
+
+
+
 struct ResourceID {
     int HeapIndex;
     int HeapOffset;
@@ -281,7 +459,7 @@ public:
         minSize = totalSize / pow(2, hierarchy - 1);
         stateList = new EST::vector<int>[hierarchy];
         for (int i = 0;i < hierarchy;i++) {
-            int num = pow(2, hierarchy - i + 1);
+            int num = pow(2, hierarchy - i-1 );
             stateList[i].resize(num);
             stateList[i].memset(stateList[i].Getdata(), num, 0);
         }
@@ -671,10 +849,10 @@ private:
 class TextureResourceItem :ResourceItem {//先初始化，然后调用创建资源函数，然后调用创建SRV函数
 public:
     TextureResourceItem() = default;
-    TextureResourceItem(ID3D12Device4* device, ID3D12DescriptorHeap* srvuavheap, ID3D12DescriptorHeap* rtvheap, ID3D12DescriptorHeap* dsvheap, bool issticker) {
-        init(device, srvuavheap, rtvheap, dsvheap, issticker);
+    TextureResourceItem(ID3D12Device4* device, ID3D12DescriptorHeap* srvuavheap, ID3D12DescriptorHeap* rtvheap, ID3D12DescriptorHeap* dsvheap, bool issticker,int texindex) {
+        init(device, srvuavheap, rtvheap, dsvheap, issticker,texindex);
     }
-    void init(ID3D12Device4* device, ID3D12DescriptorHeap* srvuavheap, ID3D12DescriptorHeap* rtvheap, ID3D12DescriptorHeap* dsvheap, bool issticker) {
+    void init(ID3D12Device4* device, ID3D12DescriptorHeap* srvuavheap, ID3D12DescriptorHeap* rtvheap, ID3D12DescriptorHeap* dsvheap, bool issticker,int texindex) {
         SRVUAVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         DSVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
         RTVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -682,13 +860,14 @@ public:
         SRVUAVHeap = srvuavheap;
         DSVHeap = dsvheap;
         isSticker = issticker;
+        TextureIndex = texindex;
     }
     void createStickerTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, wchar_t* fileName) {
         if (!isSticker)
         {
             return;
         }
-        CreateDDSTextureFromFile12(device, cmdlist, fileName, Texture, TextureUpload);//这个库函数是用提交方式创建的，所以我们就让系统自己管理贴图资源,函数过程：loadDDS（）获得上传资源大小和已经创建好的默认堆资源，以及subresource，之后创建上传堆资源，之后updatesubresource
+       CreateDDSTextureFromFile12(device, cmdlist, fileName, Texture, TextureUpload);//这个库函数是用提交方式创建的，所以我们就让系统自己管理贴图资源,函数过程：loadDDS（）获得上传资源大小和已经创建好的默认堆资源，以及subresource，之后创建上传堆资源，之后updatesubresource
     }
     void createNON_RT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear,NON_RT_DS_TextureSegregatedFreeLists*sfl) {
         if (isSticker)
@@ -762,6 +941,7 @@ public:
     int DSVoffset;
     EST::vector<int>SRVOffsetList;
     EST::vector<int>UAVOffsetList;
+    int TextureIndex;
 private:
     bool isSticker = true;
     UINT SRVUAVincrementSize;
@@ -771,10 +951,10 @@ private:
     ComPtr< ID3D12Resource> TextureUpload;
 };
 template<class T>
-class BufferResourceItem :ResourceItem {//管理cbv以及对应结构体以及资源本身,构造函数创建资源，并map，更新函数可以memcpy更新，但创建完资源项得自行创建CBV并赋值偏移量
+class ConstantBufferResourceItem :ResourceItem {//管理cbv以及对应结构体以及资源本身,构造函数创建资源，并map，更新函数可以memcpy更新，但创建完资源项得自行创建CBV并赋值偏移量
 public:
-    BufferResourceItem() = default;
-    BufferResourceItem(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap,uploadBuddySystem*upBS,defaultBuddySystem*defBS) {
+    ConstantBufferResourceItem() = default;
+    ConstantBufferResourceItem(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap,uploadBuddySystem*upBS,defaultBuddySystem*defBS) {
         init(device, cmdlist, strP, isstatic, cbvheap,upBS,defBS);
     }
     void init(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap, uploadBuddySystem* upbs, defaultBuddySystem* defbs) {
@@ -835,17 +1015,90 @@ private:
     ComPtr< ID3D12Resource> constantBufferDefault;
     ComPtr< ID3D12Resource> constantBufferUpload;
 };
+template<class T>
+class StructureBufferResourceItem :ResourceItem {//管理cbv以及对应结构体以及资源本身,构造函数创建资源，并map，更新函数可以memcpy更新，但创建完资源项得自行创建CBV并赋值偏移量
+public:
+    StructureBufferResourceItem() = default;
+    StructureBufferResourceItem(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* cbvheap, uploadBuddySystem* upBS, defaultBuddySystem* defBS,UINT elementNum) {
+        init(device, cmdlist, strP, isstatic, cbvheap, upBS, defBS,elementNum);
+    }
+    void init(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, T* strP, bool isstatic, ID3D12DescriptorHeap* srvHeap, uploadBuddySystem* upbs, defaultBuddySystem* defbs, UINT elementNum) {
+        this->isStatic = isstatic;
+        this->SRVHeap = srvHeap;
+        this->upBS = upbs;
+        this->defBS = defbs;
+        SRVCBVUAVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        this->str = strP;
+        D3D12_RANGE range = { 0,0 };
+        strSize = (sizeof(T) + 255 & ~255)*elementNum;
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = elementNum;
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+        srvDesc.Buffer.StructureByteStride = sizeof(T);
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        if (isStatic) {
+            defID = defBS->createPlacedBufferResourceInBS(&StructureBufferDefault, device, strSize);
+            upID = upBS->createPlacedBufferResourceInBS(&StructureBufferUpload, device, strSize);
+            D3D12_SUBRESOURCE_DATA subResourceData;
+            subResourceData.pData = str;
+            subResourceData.RowPitch = strSize;
+            subResourceData.SlicePitch = subResourceData.RowPitch;
+            UpdateSubresources<1>(cmdlist, StructureBufferDefault.Get(), StructureBufferUpload.Get(), 0, 0, 1, &subResourceData);//这个函数只需先创建两个资源，然后他会帮你完成Map memcpy、unmap copyregion等操作
+            CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(SRVHeap->GetCPUDescriptorHandleForHeapStart(), HeapOffsetTable[SRVHeap], SRVCBVUAVincrementSize);
+            device->CreateShaderResourceView(StructureBufferDefault.Get(), &srvDesc, cpuHandle);
+            HeapOffsetTable[SRVHeap]++;
+            //upBS->free(upID);//不要释放上传堆，他还有用
+        }
+        else {
+            upID = upBS->createPlacedBufferResourceInBS(&StructureBufferUpload, device, strSize);
+            StructureBufferUpload->Map(0, &range, reinterpret_cast<void**>(&cbmapped));
+            memcpy(cbmapped, str, strSize);
+            CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(SRVHeap->GetCPUDescriptorHandleForHeapStart(), HeapOffsetTable[SRVHeap], SRVCBVUAVincrementSize);
+            device->CreateShaderResourceView(StructureBufferUpload.Get(), &srvDesc, cpuHandle);
+            SRVoffset = HeapOffsetTable[SRVHeap];
+            HeapOffsetTable[SRVHeap]++;
+        }
+    }
+    void updateCB(T* strP) {
+        if (isStatic)
+            return;
+        str = *strP;
+        memcpy(cbmapped, str, strSize);
+    }
+    CD3DX12_GPU_DESCRIPTOR_HANDLE getSRVGPU() {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(SRVHeap->GetGPUDescriptorHandleForHeapStart(), SRVoffset, SRVCBVUAVincrementSize);
+    }
+    ID3D12DescriptorHeap* SRVHeap = nullptr;
 
+    UINT strSize;
+    int SRVoffset;
+    T* str;
+    bool isStatic = true;
+    uploadBuddySystem* upBS = nullptr;
+    defaultBuddySystem* defBS = nullptr;
+    buddyID upID;
+    buddyID defID;
+private:
+    byte* cbmapped = nullptr;
+    UINT SRVCBVUAVincrementSize;
+    ComPtr< ID3D12Resource> StructureBufferDefault;
+    ComPtr< ID3D12Resource> StructureBufferUpload;
+};
 struct GeometryItem {//构造函数传入顶点及其索引，然后调用创建静态or动态顶点，最后获取其vbvibv即可；
 public:
     GeometryItem() = default;
     ~GeometryItem() {
         freeVertexAndIndex();
     }
-    void createDynamicGeo(ID3D12Device4* device, bool isStatic, EST::vector<Vertex>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
-        this->vertices = vertices;
-        this->indices = indices;
-        vbsize = (UINT)sizeof(Vertex) * (UINT)vertices->size();
+    template <typename T>
+    void createDynamicGeo(ID3D12Device4* device, bool isStatic, EST::vector<T>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
+        //this->vertices = vertices;
+        //this->indices = indices;
+        indexNum = indices->size();
+        vbsize = (UINT)sizeof(T) * (UINT)vertices->size();
         ibsize = (UINT)sizeof(std::uint16_t) * (UINT)indices->size();
         upBS->createPlacedBufferResourceInBS(&VertexBufferUpload, device, vbsize);//顶点缓冲及索引缓冲初始状态为common效率最佳
 
@@ -863,14 +1116,15 @@ public:
         if (!isStatic) {
             vbv.BufferLocation = VertexBufferUpload->GetGPUVirtualAddress();
             vbv.SizeInBytes = vbsize;
-            vbv.StrideInBytes = sizeof(Vertex);
+            vbv.StrideInBytes = sizeof(T);
             ibv.Format = DXGI_FORMAT_R16_UINT;
             ibv.SizeInBytes = ibsize;
             ibv.BufferLocation = IndexBufferUpload->GetGPUVirtualAddress();
         }
     }
-    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, EST::vector<Vertex>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
-        createDynamicGeo(device, true, vertices, indices,upBS);
+    template <typename T>
+    void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, EST::vector<T>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
+        createDynamicGeo<T>(device, true, vertices, indices,upBS);
         defBS->createPlacedBufferResourceInBS(&VertexBufferDefault, device, vbsize);
 
         defBS->createPlacedBufferResourceInBS(&IndexBufferDefault, device, ibsize);
@@ -885,7 +1139,7 @@ public:
         UpdateSubresources<1>(cmdlist, IndexBufferDefault.Get(), IndexBufferUpload.Get(), 0, 0, 1, &subResourceData);
         vbv.BufferLocation = VertexBufferDefault->GetGPUVirtualAddress();
         vbv.SizeInBytes = vbsize;
-        vbv.StrideInBytes = sizeof(Vertex);
+        vbv.StrideInBytes = sizeof(T);
         ibv.Format = DXGI_FORMAT_R16_UINT;
         ibv.SizeInBytes = ibsize;
         ibv.BufferLocation = IndexBufferDefault->GetGPUVirtualAddress();
@@ -897,15 +1151,16 @@ public:
         return &ibv;
     }
     void freeVertexAndIndex() {
-        vertices->~vector();
-        indices->~vector();
+        //vertices->~vector();
+        //indices->~vector();
     }
+    UINT indexNum;
 private:
     UINT vbsize;
     UINT ibsize;
-    UINT indexNum;
-    EST::vector<Vertex>* vertices;
-    EST::vector<std::uint16_t>* indices;
+
+    //EST::vector<Vertex>* vertices;
+    //EST::vector<std::uint16_t>* indices;
     D3D12_VERTEX_BUFFER_VIEW vbv;
     D3D12_INDEX_BUFFER_VIEW ibv;
     ComPtr< ID3D12Resource> VertexBufferDefault;
@@ -927,10 +1182,10 @@ struct RenderItem {
         indexNum = indexnum;
         startInstance = startinstance;
         Primitive = primitive;
-        auto ptr = std::make_unique< BufferResourceItem<objectconstant>>(device, cmdlist, objc, true, CBVHeap,upBS,defBS);//让渲染项管理一个资源项
+        auto ptr = std::make_unique< ConstantBufferResourceItem<objectconstant>>(device, cmdlist, objc, true, CBVHeap,upBS,defBS);//让渲染项管理一个资源项
         objconstantRI = std::move(ptr);
     }
-    std::unique_ptr< BufferResourceItem<objectconstant>>objconstantRI;
+    std::unique_ptr< ConstantBufferResourceItem<objectconstant>>objconstantRI;
     D3D12_PRIMITIVE_TOPOLOGY Primitive;
     GeometryItem* Geo;
     int InstanceNum;
@@ -944,24 +1199,28 @@ struct RootSignatureItem {
 public:
     RootSignatureItem() = default;
     RootSignatureItem(ID3D12RootSignature* rs, int descriptorNum, int srvnum, int cbvnum, int uavnum, int samplernum, CD3DX12_DESCRIPTOR_RANGE* dt) {
-        init(rs, descriptorNum, srvnum, cbvnum, uavnum, samplernum, dt);
+        init(rs, descriptorNum, dt);
     }
-    void init(ID3D12RootSignature* rs, int descriptorNum, int srvnum, int cbvnum, int uavnum, int samplernum, CD3DX12_DESCRIPTOR_RANGE* dt) {
+    void init(ID3D12RootSignature* rs, int descriptorNum, CD3DX12_DESCRIPTOR_RANGE* dt) {
         this->rs = rs;
-        SRVNum = srvnum;
-        CBVNum = cbvnum;
-        UAVNum = uavnum;
-        SamplerNum = samplernum;
         for (int i = 0;i < descriptorNum;i++) {
             D3D12_DESCRIPTOR_RANGE_TYPE type = dt[i].RangeType;
-            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV)
+            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) {
                 SRVDescriptorTableIndex.push_back(i);
-            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV)
+                SRVNum++;
+            }
+            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
                 CBVDescriptorTableIndex.push_back(i);
-            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV)
+                CBVNum++;
+            }
+            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV) {
                 UAVDescriptorTableIndex.push_back(i);
-            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER)
+                UAVNum++;
+            }
+            if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
                 SamplerDescriptorTableIndex.push_back(i);
+                SamplerNum++;
+            }
         }
     }
     int getSRVTableIndex(int srvIndex) {
@@ -978,14 +1237,29 @@ public:
     }
     ID3D12RootSignature* rs = nullptr;
 private:
-    int SRVNum;
-    int CBVNum;
-    int UAVNum;
-    int SamplerNum;
+    int SRVNum=0;
+    int CBVNum=0;
+    int UAVNum=0;
+    int SamplerNum=0;
     EST::vector<int>SRVDescriptorTableIndex;
     EST::vector<int>CBVDescriptorTableIndex;
     EST::vector<int>UAVDescriptorTableIndex;
     EST::vector<int>SamplerDescriptorTableIndex;
+};
+class PSOItem {
+public:
+    PSOItem() = default;
+    PSOItem(D3D12_GRAPHICS_PIPELINE_STATE_DESC* PSOdesc, std::wstring ShaderFileName, ID3D12Device4* device) {
+        vsshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "VS", "vs_5_1");
+        psshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "PS", "ps_5_1");
+        PSOdesc->VS = { reinterpret_cast<BYTE*>(vsshader->GetBufferPointer()),vsshader->GetBufferSize() };
+        PSOdesc->PS = { reinterpret_cast<BYTE*>(psshader->GetBufferPointer()),psshader->GetBufferSize() };
+        ThrowIfFailed(device->CreateGraphicsPipelineState(PSOdesc, IID_PPV_ARGS(&PSO)));
+    }
+    ID3D12PipelineState* PSO;
+private:
+    ComPtr<ID3DBlob>vsshader = nullptr;
+    ComPtr<ID3DBlob>psshader = nullptr;
 };
 void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objcPara) {
     CD3DX12_GPU_DESCRIPTOR_HANDLE objcHandle = ri->objconstantRI->getCBVGPU();
@@ -994,6 +1268,10 @@ void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objc
     cmdlist->IASetIndexBuffer(ri->Geo->getIBV());
     cmdlist->IASetPrimitiveTopology(ri->Primitive);
     cmdlist->DrawIndexedInstanced(ri->indexNum, ri->InstanceNum, ri->startIndex, ri->baseVertex, ri->startInstance);
+}
+void BuildBoxAndTriangleSBRI(SAHtree* tree, std::unique_ptr<StructureBufferResourceItem<AABBbox>>& boxSBRI,std::unique_ptr<StructureBufferResourceItem<triangle>>& triangleSBRI, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* srvheap, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {
+     boxSBRI = std::make_unique<StructureBufferResourceItem<AABBbox>>(device, cmdlist, tree->SortedBoxes.Getdata(), false, srvheap, upBS, defBS, tree->SortedBoxes.size());
+     triangleSBRI = std::make_unique<StructureBufferResourceItem<triangle>>(device, cmdlist, tree->Triangles.Getdata(), false, srvheap, upBS, defBS, tree->Triangles.size());
 }
 class APP {
 public:

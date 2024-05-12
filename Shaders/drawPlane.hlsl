@@ -1,65 +1,77 @@
-
-struct vertexin
+#include"util.hlsl"
+bool RayIntersectScene(ray r,out MyTriangle outtri,out float2 b1b2)
 {
-    float4 position : POSITION;
-    float2 uv : TEXCOORD;
-    float3 noraml : NORMAL;
-    float3 tangentU : TANGENT;
-    float AOk : AOk;
-    float3 color : COLOR;
-};
-struct vertexout
-{
-    float4 positionH : SV_POSITION;
-    float3 positionW : POSITIONT;
-    float2 uv : TEXCOORD;
-    float3 normal : NORMAL;
-    float3 tanegntU : TANGENT;
-    float3 color : COLOR;
-};
-Texture2D g_tex : register(t0);
-SamplerState g_sampler : register(s0);
-cbuffer passcb : register(b1)
-{
-    float4x4 MWVP;
-    float3 eyepos;
-    float pad1;
-    float3 AL;
-    float pad2;
-    float3 BL;
-    float m;
-    float3 lightdir;
-    float pad3;
-    float4 md;
-    float3 r0;
-    float pad4;
-    float4x4 V;
-    float4x4 W;
-    float4x4 VP;
-    float4x4 WinvT;
-    float4x4 P;
-    float4x4 S;
+    AABBbox box;
+    int i = 0;
+    while (i<boxNum)
+    {
+        box = g_boxData[i];
+        if (RayIntersectAABBBox(box.center, box.extent, r))
+        {
+            if (box.isLeaf)
+            {
+                for (int j = 0; j < box.triangleNum; j++)
+                {
+                    MyTriangle t = g_triangleData[box.triangleStart + j];
+                    if (RayIntersectTriangle(t.pos1, t.pos2, t.pos3, r,b1b2))
+                    {
+                        outtri = t;
+                        return true;
+                    }
+                }
+            }
+            i++;
+        }
+        else
+        {
+            if (box.missIndex > 0)
+            {
+                i = box.missIndex;
+                continue;
+            }
+            else
+            return false;
+        }
+    }
+    return false;
 }
-cbuffer objcb : register(b0)
-{
-    float4x4 world;
-    float4x4 worldinvT;
-}
-
-
 vertexout VS(vertexin pin)
 {
-    vertexout vout;
+    vertexout vout = (vertexout) 0;
     float4 Position = mul(pin.position,world);
     float4 posW = Position;
     vout.positionH = mul(Position, VP);
     vout.positionW = posW;
     vout.uv = pin.uv;
     vout.color = pin.color;
+    vout.normal = pin.noraml;
     return vout;
 }
 float4 PS(vertexout pin) :SV_Target
 {
-    return g_tex.Sample(g_sampler, pin.uv);
-
+    float roughness = 0.4f;
+    float3 F0 = float3(0.5, 0.5, 0.5);
+    float4 texcolor = g_tex[texIndex].Sample(g_sampler, pin.uv);
+    float3 toEye = normalize(eyepos - pin.positionW);
+    float3 norL = normalize(lightdir);
+    float3 norN = normalize(pin.normal);
+    float3 diffuse = smooth_SurfaceDiff(F0, texcolor.xyz, norN, norL, dot(norN, toEye));
+    float3 h = normalize(toEye + norL);
+    float3 F = SchlickFresnel(F0, norN, h);
+    float G = smithG2(h, norL, norN, roughness, dot(norN, toEye), dot(h, toEye));
+    float D = GGX(roughness, norN, h);
+    float3 BRDF = G * D * F / (4 * abs(dot(norN, norL)) * abs(dot(norN, toEye))) + diffuse;
+    float3 r = normalize(-1.0f * toEye - (2 * dot(-1.0f * toEye, pin.normal)) * pin.normal);
+    ray R;
+    R.direction = r;
+    R.origin = pin.positionW;
+    MyTriangle t;
+    float2 b1b2;
+    if (RayIntersectScene(R, t,b1b2))
+    {
+        float u = t.uv12.x * (1.0f - b1b2.x - b1b2.y) + t.uv12.z * b1b2.x + t.uv3.x * b1b2.y;
+        float v = t.uv12.y * (1.0f - b1b2.x - b1b2.y) + t.uv12.w * b1b2.x + t.uv3.y * b1b2.y;
+        return g_tex[t.texIndex].Sample(g_sampler, float2(u,v));
+    }
+    return float4(BRDF, 1.0f);
 }

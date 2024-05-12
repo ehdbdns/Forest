@@ -149,6 +149,7 @@
     <ClInclude Include="..\..\..\d3dlearn\d3d12book-master\Common\MathHelper.h" />
     <ClInclude Include="..\..\..\d3dlearn\d3d12book-master\Common\UploadBuffer.h" />
     <ClInclude Include="d3dUtil.h" />
+    <ClInclude Include="modelReader.h" />
     <ClInclude Include="rayTracer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

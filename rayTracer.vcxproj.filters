@@ -71,5 +71,8 @@
     <ClInclude Include="rayTracer.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="modelReader.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
