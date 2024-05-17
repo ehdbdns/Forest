@@ -28,11 +28,12 @@ private:
 };
 UINT64 starttime = 0;
 UINT64 currenttime = 0;
-XMVECTOR eyepos = XMVectorSet(0.0f, 10.0f, -20.0f, 1.0f);
+XMVECTOR eyepos = XMVectorSet(20.0f, 100.0f, -200.0f, 1.0f);
 XMVECTOR target = XMVectorSet(0.0f, .0f, 1.0f, 0.0f);
 XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 XMFLOAT2 mousepospre;
-float theta, phi;
+float theta = PI /2;
+float phi = PI / 2;
 float timesecond;
 void OnMouseDown(WPARAM wparam, int x, int y) {
     mousepospre.x = x;
@@ -46,7 +47,7 @@ void OnMouseMove(WPARAM wparam, int x, int y) {
         float dtheta = XMConvertToRadians(0.25f * static_cast<float>(dx));
         float dphi = XMConvertToRadians(0.25f * static_cast<float>(dy));
         theta -= dtheta;
-        phi -= dphi;
+        phi += dphi;
         if (phi >= XM_PI)
             phi -= XM_2PI;
         if (phi <= -XM_PI)
@@ -120,6 +121,8 @@ struct threadparas {
     std::unordered_map<std::string, std::unique_ptr< PSOItem>>(*PSOITable);
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<AABBbox>>>(*boxTable);
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<triangle>>>(*triangleTable);
+    std::unique_ptr < StructureBufferResourceItem<float>>*randomNumbers;
+    std::unique_ptr < StructureBufferResourceItem<PolygonalLight>>*lights;
     std::unique_ptr<StructureBufferResourceItem<material>>*materials;
     ID3D12Device4* device;
     ID3D12RootSignature* rs;
@@ -221,10 +224,17 @@ private:
     std::unordered_map<std::string, std::unique_ptr< uploadBuddySystem>>upBSTable;
     std::unordered_map<std::string, std::unique_ptr< defaultBuddySystem>>defBSTable;
     std::unordered_map<std::string, std::unique_ptr< PSOItem>>PSOITable;
+    std::unordered_map<std::string, std::unique_ptr< computePSOItem>>computePSOITable;
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<AABBbox>>>(boxTable);
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<triangle>>>(triangleTable);
+    std::unique_ptr < StructureBufferResourceItem<float>> randomNumbers;
+    std::unique_ptr < StructureBufferResourceItem<PolygonalLight>> lights;
     std::unique_ptr<StructureBufferResourceItem<material>>materials;
+    std::unique_ptr < ConstantBufferResourceItem <lastVPmat>> lastvpmatRI;
     SAHtree sahtree;
+    EST::vector<triangle>SceneTriangles;
+    PolygonalLight l;
+    EST::vector<Vertex>lightV;
 };
 void FirstAPP::init(HINSTANCE hInstance, int       nCmdShow) {
     initDX12(hInstance, WndProc, nCmdShow);
@@ -247,7 +257,7 @@ void FirstAPP::startRender() {
 void FirstAPP::createDescriptorHeap() {
     //描述符堆及采样器堆
     D3D12_DESCRIPTOR_HEAP_DESC rtvheapdesc = {};
-    rtvheapdesc.NumDescriptors = nFrameBackBufCount;//之后会加数量
+    rtvheapdesc.NumDescriptors = nFrameBackBufCount+5;//之后会加数量
     rtvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&rtvheapdesc, IID_PPV_ARGS(&pIRTVHeap)));
@@ -315,7 +325,7 @@ void FirstAPP::createRootSignature() {
         {
             stFeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
         }
-#define rsNum 7
+#define rsNum 10
         //描述符表
         CD3DX12_DESCRIPTOR_RANGE roottables[rsNum] = {};
         roottables[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
@@ -325,6 +335,9 @@ void FirstAPP::createRootSignature() {
         roottables[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0,1);
         roottables[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1,1);
         roottables[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2,1);
+        roottables[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3,1);
+        roottables[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4,1);
+        roottables[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5,1);
         //跟参数
         CD3DX12_ROOT_PARAMETER rootparas[rsNum] = {};
         rootparas[0].InitAsDescriptorTable(1, &roottables[0], D3D12_SHADER_VISIBILITY_ALL);
@@ -334,6 +347,9 @@ void FirstAPP::createRootSignature() {
         rootparas[4].InitAsDescriptorTable(1, &roottables[4], D3D12_SHADER_VISIBILITY_ALL);
         rootparas[5].InitAsDescriptorTable(1, &roottables[5], D3D12_SHADER_VISIBILITY_ALL);
         rootparas[6].InitAsDescriptorTable(1, &roottables[6], D3D12_SHADER_VISIBILITY_ALL);
+        rootparas[7].InitAsDescriptorTable(1, &roottables[7], D3D12_SHADER_VISIBILITY_ALL);
+        rootparas[8].InitAsDescriptorTable(1, &roottables[8], D3D12_SHADER_VISIBILITY_ALL);
+        rootparas[9].InitAsDescriptorTable(1, &roottables[9], D3D12_SHADER_VISIBILITY_ALL);
 
 
 
@@ -344,9 +360,39 @@ void FirstAPP::createRootSignature() {
         assert(rootsignature != nullptr);
         ThrowIfFailed(pID3DDevice->CreateRootSignature(0, rootsignature->GetBufferPointer(), rootsignature->GetBufferSize(), IID_PPV_ARGS(&pIRootSignature)));
         assert(pIRootSignature != nullptr);
+#define csrsnum 6
+        //CS跟签名
+        CD3DX12_DESCRIPTOR_RANGE csroottables[csrsnum] = {};
+        csroottables[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+        csroottables[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+        csroottables[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+        csroottables[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+        csroottables[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
+        csroottables[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+
+        //跟参数
+        CD3DX12_ROOT_PARAMETER csrootparas[csrsnum] = {};
+        csrootparas[0].InitAsDescriptorTable(1, &csroottables[0], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[1].InitAsDescriptorTable(1, &csroottables[1], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[2].InitAsDescriptorTable(1, &csroottables[2], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[3].InitAsDescriptorTable(1, &csroottables[3], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[4].InitAsDescriptorTable(1, &csroottables[4], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[5].InitAsDescriptorTable(1, &csroottables[5], D3D12_SHADER_VISIBILITY_ALL);
+
+
+
+        CD3DX12_ROOT_SIGNATURE_DESC csrootdesc(csrsnum, csrootparas, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+        ComPtr<ID3DBlob>csrootsignature = nullptr;
+        ComPtr<ID3DBlob>cserror = nullptr;
+        ThrowIfFailed(D3D12SerializeRootSignature(&csrootdesc, D3D_ROOT_SIGNATURE_VERSION_1, csrootsignature.GetAddressOf(), cserror.GetAddressOf()));
+        assert(csrootsignature != nullptr);
+        ThrowIfFailed(pID3DDevice->CreateRootSignature(0, csrootsignature->GetBufferPointer(), csrootsignature->GetBufferSize(), IID_PPV_ARGS(&pICSRootSignature)));
+        assert(pICSRootSignature != nullptr);
         //创建跟签名项
-        auto rsRI = std::make_unique<RootSignatureItem>(pIRootSignature.Get(), rsNum, 4, 2, 0, 1, roottables);
+        auto rsRI = std::make_unique<RootSignatureItem>(pIRootSignature.Get(), rsNum, 3, 0, 1, 1, roottables);
         RootSignatureItemTable["default"] = std::move(rsRI);
+        rsRI = std::make_unique<RootSignatureItem>(pICSRootSignature.Get(), csrsnum, 3, 0, 1, 1,csroottables);
+        RootSignatureItemTable["cs"] = std::move(rsRI);
     }
 }
 void FirstAPP::createCommandList() {
@@ -375,10 +421,10 @@ void FirstAPP::compileShadersAndCreatePSO() {
             {"COLOR",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 52, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
         };
         D3D12_INPUT_ELEMENT_DESC modelinputdesc[] = {
-{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
- {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
- {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
- {"TANGENT",0,DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+{"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+ {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+ {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+ {"TANGENT",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
    {"AOk",0,DXGI_FORMAT_R32_FLOAT, 0, 48, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
    {"COLOR",0,DXGI_FORMAT_R32G32B32_FLOAT, 0, 52, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 
@@ -407,6 +453,8 @@ void FirstAPP::compileShadersAndCreatePSO() {
         psodesc.SampleDesc.Count = 1;
         psodesc.SampleDesc.Quality = 0;
         auto PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawPlane.hlsl", pID3DDevice.Get());
+        PSOITable["raytrace"] = std::move(PSOI);
+        PSOI= std::make_unique<PSOItem>(&psodesc, L"Shaders//returnColor.hlsl", pID3DDevice.Get());
         PSOITable["color"] = std::move(PSOI);
         psodesc.InputLayout = { modelinputdesc,_countof(modelinputdesc) };
         psodesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -416,16 +464,33 @@ void FirstAPP::compileShadersAndCreatePSO() {
         psodesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
         PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawBox.hlsl", pID3DDevice.Get());
         PSOITable["box"] = std::move(PSOI);
+        psodesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//wposPass.hlsl", pID3DDevice.Get());
+        PSOITable["wpos"] = std::move(PSOI);
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//normalPass.hlsl", pID3DDevice.Get());
+        PSOITable["normal"] = std::move(PSOI);
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//firstFramePass.hlsl", pID3DDevice.Get());
+        PSOITable["firstFramePass"] = std::move(PSOI);
+        D3D12_COMPUTE_PIPELINE_STATE_DESC computePSOdesc = {};
+        computePSOdesc.pRootSignature = pICSRootSignature.Get();
+        computePSOdesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        auto computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//denoise.hlsl", pID3DDevice.Get());
+        computePSOITable["denoise"] = std::move(computePSOI);
+        computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//mixPass.hlsl", pID3DDevice.Get());
+        computePSOITable["mixPass"] = std::move(computePSOI);
     }
 }
 void FirstAPP::createVideoMemoryManager() {
   auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 4, pID3DDevice.Get());
   RTDSSFLTable["RTDS"] = std::move(RTDSsfl);
 
-  auto upBS = std::make_unique<uploadBuddySystem>(1024*64, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
+  auto NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(3200, 4, pID3DDevice.Get());
+  NONRTDSSFLTable["NONRTDS"] = std::move(NONRTDSsfl);
+
+  auto upBS = std::make_unique<uploadBuddySystem>(1024*128, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
   upBSTable["default"] = std::move(upBS);
 
-  auto defBS = std::make_unique<defaultBuddySystem>(1024*64, 8, pID3DDevice.Get());
+  auto defBS = std::make_unique<defaultBuddySystem>(1024*128, 8, pID3DDevice.Get());
   defBSTable["default"] = std::move(defBS);
 }
 void FirstAPP::createDepthBufferAndSampler() {
@@ -452,7 +517,7 @@ void FirstAPP::createDepthBufferAndSampler() {
     dsclear.DepthStencil.Depth = 1.0f;
     dsclear.DepthStencil.Stencil = 0;
     auto DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false,-1);
-    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, D3D12_HEAP_FLAG_NONE, &dsclear,RTDSSFLTable["RTDS"].get());
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear,RTDSSFLTable["RTDS"].get());
     DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
     TextureResourceItemTable["DS"] = std::move(DSRI);
 
@@ -474,12 +539,11 @@ void FirstAPP::createDepthBufferAndSampler() {
 void FirstAPP::createGeometryItemAndBVHData() {
     //模型顶点
     mreader.readFileHeader("C:\\mytinyrenderproj\\rayTracer\\rayTracer\\soldier.m3d");
-    EST::vector<triangle>ModelTris;
     int istarr[6] = { 0,7230 * 3,11679 * 3,18258 * 3,22065 * 3,10000000000 };
     UINT isizearr[5] = { 7230 * 3 ,4449 * 3 ,6579 * 3 ,3807 * 3 ,442 * 3 };
     int ModelTexIndex = -1;
     int nextIndex = 0;
-    for (int i = 0;i < mreader.mindices.size() / 3;i++) {
+    for (int i = 0;i < mreader.mindices.size() / 333;i++) {
         triangle tri;
         if (i * 3 >= nextIndex) {
             ModelTexIndex++;
@@ -489,20 +553,78 @@ void FirstAPP::createGeometryItemAndBVHData() {
         modelVertex v1 = mreader.mvertices[mreader.mindices[i * 3]];
         modelVertex v2 = mreader.mvertices[mreader.mindices[i * 3 + 1]];
         modelVertex v3 = mreader.mvertices[mreader.mindices[i * 3 + 2]];
-        tri.pos1 = v1.position;
-        tri.pos2 = v2.position;
-        tri.pos3 = v3.position;
+        tri.pos1 = XMFLOAT3{v1.position.x,v1.position.y,v1.position.z};
+        tri.pos2 = XMFLOAT3{ v2.position.x,v2.position.y,v2.position.z };
+        tri.pos3 = XMFLOAT3{ v3.position.x,v3.position.y,v3.position.z };
         tri.n = mreader.mvertices[mreader.mindices[i * 3]].normal;
         tri.uv12 = XMFLOAT4{v1.texuv.x,v1.texuv.y, v2.texuv.x,v2.texuv.y};
         tri.uv3 = XMFLOAT2{ v3.texuv.x,v3.texuv.y };
-        XMVECTOR pvec1 = XMLoadFloat3(&tri.pos1);
-        XMVECTOR pvec2 = XMLoadFloat3(&tri.pos2);
-        XMVECTOR pvec3 = XMLoadFloat3(&tri.pos3);
-        XMStoreFloat3(&tri.g, (pvec1 + pvec2 + pvec3) / 3);
-        ModelTris.push_back(tri);
+        tri.color = v1.color;
+        SceneTriangles.push_back(tri);
     }
-    sahtree.init(ModelTris);
+
+
+    //房间顶点
+    Vertex arrv[] = {
+{XMFLOAT4{-60.0f + 6,5,60.0f,1.0f},XMFLOAT2{0,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},//底
+{XMFLOAT4{150.0f,5,60.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+{XMFLOAT4{-60.0f + 6,5,-120.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+{XMFLOAT4{150.0f,  5 ,-120.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+
+{XMFLOAT4{-60.0f + 6, 200.0f ,-120.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},//左
+{XMFLOAT4{-60.0f + 6, 200.0f ,60.0f,1.0f},XMFLOAT2{1.0f,0},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
+{XMFLOAT4{-60.0f + 6,5,-120.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
+{XMFLOAT4{-60.0f + 6,5,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
+
+
+ {XMFLOAT4{-60.0f + 6,200,60.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},//前
+  {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{-60.0f + 6,0,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{150.0f,0,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+
+   {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},//右
+  {XMFLOAT4{150.0f,200,-120.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{150.0f,0,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{150.0f,0,-120.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+
+     {XMFLOAT4{-60.0f,200,-120.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},//上
+  {XMFLOAT4{150.0f,200,-120.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{-60.0f,200,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+  {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+    };
+    EST::vector<Vertex>planev(arrv, 20);
+    for (int i = 0;i < 4;i++) {
+        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
+        planev[i].normal = XMFLOAT3{ 0,1.0f,0 };
+    }
+    for (int i = 4;i < 8;i++) {
+        planev[i].color = XMFLOAT3{ 0.4f,0,0 };
+        planev[i].normal = XMFLOAT3{ 1.0f,0,0 };
+    }
+    for (int i = 8;i < 12;i++) {
+        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
+        planev[i].normal = XMFLOAT3{ 0,0,-1.0f };
+    }
+    for (int i = 12;i < 16;i++) {
+        planev[i].color = XMFLOAT3{ 0,0.4f,0 };
+        planev[i].normal = XMFLOAT3{ -1.0f,0,0 };
+    }
+    for (int i = 16;i < 20;i++) {
+        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
+        planev[i].normal = XMFLOAT3{ 0,-1.0f,0 };
+    }
+    std::uint16_t arri[] = {
+         0,1,2,2,1,3,
+         4,5,6,6,5,7,
+         8,9,10,10,9,11,
+         12,13,14,14,13,15,
+         16,17,18,18,17,19
+    };
+    EST::vector<std::uint16_t>planei(arri, 30);
+    AddTrianglesToScene(SceneTriangles, planev, planei,-1);
+    sahtree.init(SceneTriangles);
     currpasscb.boxNum = sahtree.boxNum;
+
     //包围盒顶点
     EST::vector<Vertex>boxesv;
     for (int i = 0;i < sahtree.leafBox.size();i++) {
@@ -556,64 +678,23 @@ void FirstAPP::createGeometryItemAndBVHData() {
         bvhI.push_back(i * 8 + 7);
 
     }
-
-    //房间顶点
-    Vertex arrv[] = {
-{XMFLOAT4{-60.0f + 6,5,60.0f,1.0f},XMFLOAT2{0,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-{XMFLOAT4{150.0f,5,60.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-{XMFLOAT4{-60.0f + 6,5,-120.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-{XMFLOAT4{150.0f,  5 ,-120.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-
-{XMFLOAT4{-60.0f + 6, 200.0f ,-120.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
-{XMFLOAT4{-60.0f + 6, 200.0f ,60.0f,1.0f},XMFLOAT2{1.0f,0},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
-{XMFLOAT4{-60.0f + 6,5,-120.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
-{XMFLOAT4{-60.0f + 6,5,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{1.0f,0,0},XMFLOAT3{0,0,-1.0f},0},
-
-
- {XMFLOAT4{-60.0f + 6,200,60.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{-60.0f + 6,0,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,0,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-
-   {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,200,-120.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,0,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,0,-120.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-
-     {XMFLOAT4{-60.0f,200,-120.0f,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,200,-120.0f,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{-60.0f,200,60.0f,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
-  {XMFLOAT4{150.0f,200,60.0f,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,1.0f,0},XMFLOAT3{1.0f,0,0},0},
+    //面光源顶点
+    Vertex Lightv[] = {
+     {XMFLOAT4{10,199.5,-45,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{40,199.5,-45,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{10,199.5,-15,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{40,199.5,-15,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}}
     };
-    EST::vector<Vertex>planev(arrv, 20);
-    for (int i = 0;i < 4;i++) {
-        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
-        planev[i].normal = XMFLOAT3{ 0,1.0f,0 };
-    }
-    for (int i = 4;i < 8;i++) {
-        planev[i].color = XMFLOAT3{ 0.4f,0,0 };
-        planev[i].normal = XMFLOAT3{ 1.0f,0,0 };
-    }
-    for (int i = 8;i < 12;i++) {
-        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
-        planev[i].normal = XMFLOAT3{ 0,0,-1.0f };
-    }
-    for (int i = 12;i < 16;i++) {
-        planev[i].color = XMFLOAT3{ 0,0.4f,0 };
-        planev[i].normal = XMFLOAT3{ 0,0,1.0f };
-    }
-    for (int i = 16;i < 20;i++) {
-        planev[i].color = XMFLOAT3{ 0.4f,0.4f,0.4f };
-        planev[i].normal = XMFLOAT3{ 0,-1.0f,0 };
-    }
-    std::uint16_t arri[] = {
-         0,1,2,2,1,3,
-         4,5,6,6,5,7,
-         8,9,10,10,9,11,
-         12,13,14,14,13,15,
-         16,17,18,18,17,19
+    std::uint16_t Lighti[] = {
+        0,1,2,2,1,3
     };
-    EST::vector<std::uint16_t>planei(arri, 30);
+    EST::vector<Vertex>lightv(Lightv, 4);
+    EST::vector<std::uint16_t>lighti(Lighti, 6);
+    //康奈尔盒子顶点
+    EST::vector<Vertex>cornellBoxv;
+    EST::vector<std::uint16_t>cornellBoxi;
+    CreateBox(30, 80, 30, cornellBoxv, cornellBoxi, XMFLOAT3{0.6f,0.6f,0.6f});
+ 
     //创建几何项以及渲染项
     //几何项
     auto upBS = upBSTable["default"].get();
@@ -627,6 +708,12 @@ void FirstAPP::createGeometryItemAndBVHData() {
     auto boxGeo = std::make_unique<GeometryItem>();
     boxGeo->createStaticGeo<Vertex>(pID3DDevice.Get(), pIcmdlistpre.Get(), &boxesv, &bvhI, upBS, defBS);
     GeometryItemTable["box"] = std::move(boxGeo);
+    auto LightGeo = std::make_unique<GeometryItem>();
+    LightGeo->createDynamicGeo<Vertex>(pID3DDevice.Get(), &lightv, &lighti, upBS);
+    GeometryItemTable["light"] = std::move(LightGeo);
+    auto cornellBoxGeo = std::make_unique<GeometryItem>();
+    cornellBoxGeo->createStaticGeo<Vertex>(pID3DDevice.Get(), pIcmdlistpre.Get(), &cornellBoxv, &cornellBoxi, upBS, defBS);
+    GeometryItemTable["cornellBox"] = std::move(cornellBoxGeo);
 }
 void FirstAPP::createResourceItem() {
     //创建纹理资源以及缓冲资源
@@ -636,12 +723,27 @@ void FirstAPP::createResourceItem() {
     passconstant passc;
     auto passBRI = std::make_unique<ConstantBufferResourceItem<passconstant>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &passc, false, pIpresrvheap.Get(), upBS, defBS);
     BufferResourceItemTable["pass"] = std::move(passBRI);
-
+    lastVPmat lvp;
+    lastvpmatRI= std::make_unique<ConstantBufferResourceItem<lastVPmat>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &lvp, false, pIpresrvheap.Get(), upBS, defBS);
     std::unique_ptr<StructureBufferResourceItem<AABBbox>>boxRI;
     std::unique_ptr<StructureBufferResourceItem<triangle>>triangleRI;
     BuildBoxAndTriangleSBRI(&sahtree, boxRI, triangleRI, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
     boxTable["model"] = std::move(boxRI);
     triangleTable["model"] = std::move(triangleRI);
+    std::unique_ptr<StructureBufferResourceItem<float>>randomNumberRI;
+    EST::vector<float>randnums;
+    GenerateRandomNum(randnums, 1000);
+    randomNumberRI = std::make_unique<StructureBufferResourceItem<float>>(pID3DDevice.Get(), pIcmdlistpre.Get(), randnums.Getdata(), true, pIpresrvheap.Get(), upBS, defBS, randnums.size());
+    randomNumbers = std::move(randomNumberRI);
+
+    std::unique_ptr<StructureBufferResourceItem<PolygonalLight>>lightRI;
+    l.area = 900.0f;
+    l.color = XMFLOAT3{ 1.0,1.0,1.0 };
+    l.Xstart = 10;l.Xend = 40;
+    l.Zstart = -45;l.Zend = -15;
+    l.normal = XMFLOAT3{ 0,-1.0f,0 };
+    lightRI = std::make_unique<StructureBufferResourceItem<PolygonalLight>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &l, false, pIpresrvheap.Get(), upBS, defBS, 1);
+    lights = std::move(lightRI);
 
     EST::vector<material>mats;
     material mat1;
@@ -660,7 +762,7 @@ void FirstAPP::createResourceItem() {
     SRVdesc.Texture2D.ResourceMinLODClamp = 0.0f;
     SRVdesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     grassTRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[grassTRI->SRVUAVHeap]);
-    TextureResourceItemTable["grass"] = std::move(grassTRI);
+    TextureResourceItemTable["grass"] = std::move(grassTRI);//众多纹理图
 
     auto brickTRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, true,1);
     brickTRI->createStickerTex(pID3DDevice.Get(), pIcmdlistpre.Get(), L"Textures\\bricks3.dds");
@@ -697,31 +799,100 @@ void FirstAPP::createResourceItem() {
     modelRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[modelRI->SRVUAVHeap]);
     TextureResourceItemTable["model4"] = std::move(modelRI);
 
+    auto filteredRI=std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr,false, NULL);
+    D3D12_RESOURCE_DESC filteredTexDesc = {};
+    filteredTexDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    filteredTexDesc.Alignment = 0;
+    filteredTexDesc.Width = iWidth;
+    filteredTexDesc.Height = iHeight;
+    filteredTexDesc.DepthOrArraySize = 1;
+    filteredTexDesc.MipLevels = 1;
+    filteredTexDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    filteredTexDesc.SampleDesc.Count = 1;
+    filteredTexDesc.SampleDesc.Quality = 0;
+    filteredTexDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    filteredTexDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    D3D12_UNORDERED_ACCESS_VIEW_DESC filteredTexUavDesc = {};
+    filteredTexUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    filteredTexUavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    filteredTexUavDesc.Texture2D.MipSlice = 0;
+    filteredTexUavDesc.Texture2D.PlaneSlice = 0;
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap],pIcmdlistpre.Get());
+    TextureResourceItemTable["filteredtex"] = std::move(filteredRI);//降噪后的图放这
+    for (int i = 0;i < nFrameBackBufCount;i++) {
+        auto backBufferRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(),nullptr, nullptr, false, NULL);
+        backBufferRI->setTextureToRI(pIARenderTargets[i]);
+        backBufferRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[backBufferRI->SRVUAVHeap]);
+        TextureResourceItemTable["backBuffer" + std::to_string(i)] = std::move(backBufferRI);//为每个backBuffer创建SRV
+    }
+    D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+    rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rtvDesc.Texture2D.MipSlice = 0;
+    rtvDesc.Texture2D.PlaneSlice = 0;
+    filteredTexDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    auto lastFrameBuffer = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    lastFrameBuffer->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc,nullptr, RTDSSFLTable["RTDS"].get());
+    lastFrameBuffer->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->SRVUAVHeap]);
+    lastFrameBuffer->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->RTVHeap],pIcmdlistpre.Get());
+    TextureResourceItemTable["lastFrameBuffer"] = std::move(lastFrameBuffer);
+
+    auto wposTexRI= std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(),pIRTVHeap.Get(), nullptr, false, NULL);
+    wposTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS"].get());
+
+    wposTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    wposTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    TextureResourceItemTable["wpos"] = std::move(wposTexRI);//wpos图
+
+    auto normalTexRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    normalTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS"].get());
+    normalTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    normalTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    TextureResourceItemTable["normal"] = std::move(normalTexRI);//normal图
 }
 void FirstAPP::createRenderItem() {
     auto upBS = upBSTable["default"].get();
     auto defBS = defBSTable["default"].get();
     //渲染项
     objectconstant objc;
-    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0)));
-    objc.texIndex = TextureResourceItemTable["grass"].get()->TextureIndex;
+    XMMATRIX world = XMMatrixTranslation(0, 0, 0);
+    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objc.invTworld, (XMMatrixInverse( nullptr,world)));
+    objc.texIndex = -1;
     auto Geo = GeometryItemTable["plane"].get();
     auto planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
     RenderItemTable["plane0"] = std::move(planeRi);
-    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(114, 0, 0)));
-    objc.texIndex = TextureResourceItemTable["brick"].get()->TextureIndex;
-    planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
-    RenderItemTable["plane1"] = std::move(planeRi);
-    objc.texIndex = TextureResourceItemTable["checkboard"].get()->TextureIndex;
-    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(228, 0, 0)));
-    planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
-    RenderItemTable["plane2"] = std::move(planeRi);
-    objc.texIndex = TextureResourceItemTable["grass"].get()->TextureIndex;
-    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(342, 0, 0)));
-    planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
-    RenderItemTable["plane3"] = std::move(planeRi);
+    world = XMMatrixTranslation(20, 70, 0.0f);
+    world = XMMatrixMultiply(world, XMMatrixRotationY(PI/3));
+    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objc.invTworld, (XMMatrixInverse(nullptr, world)));
+    Geo = GeometryItemTable["cornellBox"].get();
+    auto cornellBoxRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    RenderItemTable["cornellBox"] = std::move(cornellBoxRi);
+    world = XMMatrixTranslation(80, 70, 0.0f);
+    world = XMMatrixMultiply(world, XMMatrixRotationY(PI / 6));
+    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objc.invTworld, (XMMatrixInverse(nullptr, world)));
+    Geo = GeometryItemTable["cornellBox"].get();
+    cornellBoxRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    RenderItemTable["cornellBox1"] = std::move(cornellBoxRi);
+    //XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(114, 0, 0)));
+    //objc.texIndex = TextureResourceItemTable["brick"].get()->TextureIndex;
+    //planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    //RenderItemTable["plane1"] = std::move(planeRi);
+    //objc.texIndex = TextureResourceItemTable["checkboard"].get()->TextureIndex;
+    //XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(228, 0, 0)));
+    //planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    //RenderItemTable["plane2"] = std::move(planeRi);
+    //objc.texIndex = TextureResourceItemTable["grass"].get()->TextureIndex;
+    //XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(342, 0, 0)));
+    //planeRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    //RenderItemTable["plane3"] = std::move(planeRi);
 
-    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0)));
+ /*   world = XMMatrixTranslation(80, 0, 0.0f);
+    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objc.invTworld, (XMMatrixInverse(nullptr, world)));
     int istarr[5] = { 0,7230 * 3,11679 * 3,18258 * 3,22065 * 3 };
     UINT isizearr[5] = { 7230 * 3 ,4449 * 3 ,6579 * 3 ,3807 * 3 ,442 * 3 };
     Geo = GeometryItemTable["model"].get();
@@ -730,10 +901,16 @@ void FirstAPP::createRenderItem() {
         objc.texIndex= TextureResourceItemTable[name+std::to_string(i)].get()->TextureIndex;
         auto modelRi = std::make_unique<RenderItem>(Geo, 1, 0, istarr[i], isizearr[i], 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
         RenderItemTable[name+std::to_string(i)] = std::move(modelRi);
-    }
-    Geo = GeometryItemTable["box"].get();
-    auto boxRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_LINELIST,&objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
-    RenderItemTable["box"] = std::move(boxRi);
+    }*/
+    //Geo = GeometryItemTable["box"].get();
+    //auto boxRi = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_LINELIST,&objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    //RenderItemTable["box"] = std::move(boxRi);
+    world = XMMatrixTranslation(0, 0, 0.0f);
+    XMStoreFloat4x4(&objc.world, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objc.invTworld, (XMMatrixInverse(nullptr, world)));
+    Geo = GeometryItemTable["light"].get();
+    auto lightRI = std::make_unique<RenderItem>(Geo, 1, 0, 0, Geo->indexNum, 0, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, &objc, pID3DDevice.Get(), pIcmdlistpre.Get(), pIpresrvheap.Get(), upBS, defBS);
+    RenderItemTable["light"] = std::move(lightRI);
 }
 
 int FirstAPP::createNewThreadToRender(std::string RenderItemName, std::string BufferResourceItemName, std::string TextureResourceItemName, std::string RootSignatureItemName, std::string SamplerResourceItemItemName, std::string PSOName,int order) {
@@ -775,6 +952,8 @@ int FirstAPP::createNewThreadToRender(std::string RenderItemName, std::string Bu
     paras[i].materials = &materials;
     paras[i].boxTable = &boxTable;
     paras[i].triangleTable = &triangleTable;
+    paras[i].randomNumbers = &randomNumbers;
+    paras[i].lights = &lights;
     paras[i].PSOITable = &PSOITable;
     paras[i].nCurrentFrameIndex = &nFrameIndex;
     paras[i].RTVHeap = pIRTVHeap.Get();
@@ -818,14 +997,17 @@ void FirstAPP::startSubThread() {
     //线程初始化传参并启动
     HandleMessage->clear();
     paras.resize(20);
-    createNewThreadToRender("plane0", "pass", "grass", "default", "default", "color",0);
-    createNewThreadToRender("model0", "pass", "model1", "default", "default", "tex",1);
-    createNewThreadToRender("model1", "pass", "model2", "default", "default", "tex",2);
-    createNewThreadToRender("model2", "pass", "model3", "default", "default", "tex",3);
-    createNewThreadToRender("model3", "pass", "model4", "default", "default", "tex",4);
-    createNewThreadToRender("model4", "pass", "grass", "default", "default", "color",5);
-    createNewThreadToRender("box", "pass", "grass", "default", "default", "box",6);
-    startAndWaitNewThread(7);
+    createNewThreadToRender("plane0", "pass", "checkboard", "default", "default", "raytrace",0);
+    //createNewThreadToRender("model0", "pass", "model1", "default", "default", "raytrace",1);
+    //createNewThreadToRender("model1", "pass", "model2", "default", "default", "raytrace",2);
+    //createNewThreadToRender("model2", "pass", "model3", "default", "default", "raytrace",3);
+    //createNewThreadToRender("model3", "pass", "model4", "default", "default", "raytrace",4);
+    //createNewThreadToRender("model4", "pass", "grass", "default", "default", "raytrace",5);
+    //createNewThreadToRender("box", "pass", "grass", "default", "default", "box",6);
+    createNewThreadToRender("light", "pass", "grass", "default", "default", "color",1);
+    createNewThreadToRender("cornellBox", "pass", "grass", "default", "default", "raytrace",2);
+    createNewThreadToRender("cornellBox1", "pass", "grass", "default", "default", "raytrace",3);
+    startAndWaitNewThread(4);
 }
 void FirstAPP::startRenderLoop() {
     try {
@@ -877,11 +1059,46 @@ void FirstAPP::startRenderLoop() {
                 switch (nStates) {
                 case 0:
                 {
+                    float x = cos(theta) * sin(phi);
+                    float z = sin(theta) * sin(phi);
+                    float y = cos(phi);
+                    XMMATRIX Viewmat = XMMatrixLookAtLH(eyepos, eyepos + XMVectorSet(x, y, z, 0), up);
+                    XMMATRIX projmat = XMMatrixPerspectiveFovLH(XM_PIDIV2, (FLOAT)1 / (FLOAT)1, 0.1f, 1000.0f);
+                    XMMATRIX vpmat = XMMatrixMultiply(Viewmat, projmat);
+                    XMMATRIX invP = XMMatrixInverse(nullptr, projmat);
+                    XMStoreFloat3(&currpasscb.eyepos, eyepos);
+                    XMStoreFloat4x4(&currpasscb.V, XMMatrixTranspose(Viewmat));
+                    XMStoreFloat4x4(&currpasscb.VP, XMMatrixTranspose(vpmat));
+                    XMStoreFloat4x4(&currpasscb.P, XMMatrixTranspose(projmat));
+                    BufferResourceItemTable["pass"]->updateCB(&currpasscb);
+                    lastVPmat lvp;
+                    lvp.VP =XMMatrixTranspose( vpmat);
+                    lvp.nframe = nFrame;
+                    lastvpmatRI->updateCB(&lvp);
                     ThrowIfFailed(pIcmdlistpre->Reset(pIcmdallpre.Get(), nullptr));
                     //预处理pass渲染（整个程序只需要渲染一次）
-                    //··············
-                    //··············
-                    //··············
+                    // 渲染第一帧
+                    auto DSV = TextureResourceItemTable["DS"].get()->getDSVCPU();
+                    auto RSI = RootSignatureItemTable["default"].get();
+                    auto SRI = SamplerResourceItemTable["default"].get();
+                    auto passRI = BufferResourceItemTable["pass"].get();
+                    auto firstFrameRI = TextureResourceItemTable["lastFrameBuffer"].get();//这里的firstFrameRI就是lastFrameBuffer
+                    auto firstTexRI = TextureResourceItemTable["grass"].get();
+                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->OMSetRenderTargets(1, &firstFrameRI->getRTVCPU(), true, &DSV);
+                    pIcmdlistpre->RSSetViewports(1, &stViewPort);
+                    pIcmdlistpre->RSSetScissorRects(1, &stScissorRect);
+                    pIcmdlistpre->SetGraphicsRootSignature(RSI->rs);
+                    pIcmdlistpre->SetPipelineState(PSOITable["firstFramePass"].get()->PSO);
+                    ID3D12DescriptorHeap* heaps[2] = { firstFrameRI->SRVUAVHeap,SRI->samplerHeap };
+                    pIcmdlistpre->SetDescriptorHeaps(2, heaps);
+                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), passRI->getCBVGPU());
+                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(0), firstTexRI->getSRVGPU(0));
+                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(4), randomNumbers.get()->getSRVGPU());
+                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(5), lights.get()->getSRVGPU());
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
+                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (firstFrameRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
                     //处理指令
                     pIcmdlistpre->Close();
                     nStates = 1;
@@ -941,11 +1158,37 @@ void FirstAPP::startRenderLoop() {
                         eyepos = eyepos + right * k*7;
 
                     }
+                    if (GetAsyncKeyState(VK_LEFT) & 0x8000)
+                    {
+                        WriteConsole(g_hOutput, "d", 2, NULL, NULL);
+                        l.Xstart -= 1.0f;
+                        l.Xend -= 1.0f;
+                    }
+                    if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
+                    {
+                        WriteConsole(g_hOutput, "d", 2, NULL, NULL);
+                        l.Xstart += 1.0f;
+                        l.Xend += 1.0f;
+                    }
+                    if (GetAsyncKeyState(VK_UP) & 0x8000)
+                    {
+                        WriteConsole(g_hOutput, "d", 2, NULL, NULL);
+                        l.Zstart += 1.0f;
+                        l.Zend += 1.0f;
+                    }
+                    if (GetAsyncKeyState(VK_DOWN) & 0x8000)
+                    {
+                        WriteConsole(g_hOutput, "d", 2, NULL, NULL);
+                        l.Zstart -= 1.0f;
+                        l.Zend -= 1.0f;
+                    }
                     if (rotationAngle >= XM_2PI)
                         rotationAngle = fmod(rotationAngle, XM_2PI);
                     XMMATRIX Viewmat = XMMatrixLookAtLH(eyepos, eyepos + XMVectorSet(x, y, z, 0), up);
                     XMMATRIX projmat = XMMatrixPerspectiveFovLH(XM_PIDIV2, (FLOAT)1 / (FLOAT)1, 0.1f, 1000.0f);
                     XMMATRIX vpmat = XMMatrixMultiply(Viewmat, projmat);
+                    lastvpmat.VP = XMMatrixTranspose( vpmat);
+                    lastvpmat.nframe = nFrame;
                     XMMATRIX invP = XMMatrixInverse(nullptr, projmat);
                     XMStoreFloat3(&currpasscb.eyepos, eyepos);
                     XMStoreFloat4x4(&currpasscb.V, XMMatrixTranspose(Viewmat));
@@ -955,10 +1198,12 @@ void FirstAPP::startRenderLoop() {
                     currpasscb.AL = XMFLOAT3{ 50.5f,50.5f,50.5f };
                     currpasscb.BL = XMFLOAT3{ 1.0f,1.0f,1.0f };
                     currpasscb.lightdir = XMFLOAT3(1.0f, 1.0f, 0);
+                    currpasscb.nFrame = nFrame;
                     //每帧都变化的CBmemcpy
 
                     BufferResourceItemTable["pass"]->updateCB(&currpasscb);
-
+                    lights->updateCB(&l);
+                    updateLight(GeometryItemTable["light"].get(), l);
                     //每帧都变化的点
                     // ·······
                     // ·······
@@ -966,10 +1211,31 @@ void FirstAPP::startRenderLoop() {
                     //这一帧是否增加新的渲染线程或删除线程
               
                     ThrowIfFailed(pIcmdlistpre->Reset(pIcmdallpre.Get(), nullptr));
-                    //每帧都要渲染的预处理pass(变化的纹理)
-                    // ············
-                    // ············
-                    // ············
+                    //每帧都要渲染的预处理pass(变化的纹理,比如Gbuffer)
+                    auto DSV = TextureResourceItemTable["DS"].get()->getDSVCPU();
+                    auto RSI = RootSignatureItemTable["default"].get();
+                    auto wposRI = TextureResourceItemTable["wpos"].get();
+                    auto normalRI = TextureResourceItemTable["normal"].get();
+                    auto SRI = SamplerResourceItemTable["default"].get();
+                    auto passRI = BufferResourceItemTable["pass"].get();
+                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->OMSetRenderTargets(1,&wposRI->getRTVCPU(), true, &DSV);
+                    pIcmdlistpre->RSSetViewports(1, &stViewPort);
+                    pIcmdlistpre->RSSetScissorRects(1, &stScissorRect);
+                    pIcmdlistpre->SetGraphicsRootSignature(RSI->rs);
+                    pIcmdlistpre->SetPipelineState(PSOITable["wpos"].get()->PSO);
+                    ID3D12DescriptorHeap* heaps[2] = { wposRI->SRVUAVHeap,SRI->samplerHeap };
+                    pIcmdlistpre->SetDescriptorHeaps(2, heaps);
+                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), passRI->getCBVGPU());
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
+                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->OMSetRenderTargets(1, &normalRI->getRTVCPU(), true, &DSV);
+                    pIcmdlistpre->SetPipelineState(PSOITable["normal"].get()->PSO);
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
+                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (wposRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
+                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (normalRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
                     //cmdlistpre传入命令队列进行处理
                     pIcmdlistpre->Close();
                     nStates = 2;
@@ -1003,8 +1269,50 @@ void FirstAPP::startRenderLoop() {
                     pIcmdlistpre->ClearRenderTargetView(stRTVHandle, Colors::AliceBlue, 0, nullptr);
                     pIcmdlistpre->ClearDepthStencilView(TextureResourceItemTable["DS"].get()->getDSVCPU(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
                     pIcmdlistpre->Close();
+                    //后处理pass
                     pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
+                    pIcmdlistpost->SetComputeRootSignature(pICSRootSignature.Get());
+                    pIcmdlistpost->SetPipelineState(computePSOITable["denoise"].get()->PSO);
+                    auto currentBackBufferRI = TextureResourceItemTable["backBuffer" + std::to_string(nFrameIndex)].get();
+                    auto wposTexRI = TextureResourceItemTable["wpos"].get();
+                    auto normalTexRI = TextureResourceItemTable["normal"].get();
+                    auto samplerRI = SamplerResourceItemTable["default"].get();
+                    auto RSI = RootSignatureItemTable["cs"].get();
+                    auto filteredTexRI = TextureResourceItemTable["filteredtex"].get();
+                    auto lastFrameBufferRI = TextureResourceItemTable["lastFrameBuffer"].get();
+                    ID3D12DescriptorHeap* heaps[2] = { wposTexRI->SRVUAVHeap,samplerRI->samplerHeap};
+                    pIcmdlistpost->SetDescriptorHeaps(2, heaps);
+                    CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle = currentBackBufferRI->getSRVGPU(0);
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), gpuHandle);
+                    gpuHandle = wposTexRI->getSRVGPU(0);
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(1), gpuHandle);
+                    gpuHandle = normalTexRI->getSRVGPU(0);
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(2), gpuHandle);
+                    gpuHandle = samplerRI->getSampler();
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSamplerTableIndex(0), gpuHandle);
+                    gpuHandle = filteredTexRI->getUAVGPU(0);
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), gpuHandle);
+                    pIcmdlistpost->Dispatch(64, 48,1);//降噪！
+                    pIcmdlistpost->SetPipelineState(computePSOITable["mixPass"].get()->PSO);
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), lastFrameBufferRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), filteredTexRI->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getCBVTableIndex(0), lastvpmatRI->getCBVGPU());
+                    pIcmdlistpost->Dispatch(64, 48, 1);//混合！
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_GENERIC_READ,D3D12_RESOURCE_STATE_COPY_DEST));
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (filteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE));
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (lastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST));
+                    pIcmdlistpost->CopyResource(pIARenderTargets[nFrameIndex].Get(), filteredTexRI->getResource());//将降噪好的图复制到交换链及lastFrameBuffer上
+                    pIcmdlistpost->CopyResource(lastFrameBufferRI->getResource(), filteredTexRI->getResource());
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (filteredTexRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+                    (lastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
                     pIcmdlistpost->Close();
                     cmdlists.clear();
                     cmdlists.push_back(pIcmdlistpre.Get());
@@ -1020,7 +1328,7 @@ void FirstAPP::startRenderLoop() {
                     nStates = 1;
                     HandleMessage->clear();
                     HandleMessage->push_back(hFenceEvent);
-
+                    lastvpmatRI->updateCB(&lastvpmat);
                 } break;
                 default: {
 
@@ -1074,6 +1382,7 @@ UINT __stdcall threadfunc(void* ppara) {
             StructureBufferResourceItem<AABBbox>* boxSBRI = (*para->boxTable)["model"].get();
             StructureBufferResourceItem<triangle>* triangleSBRI = (*para->triangleTable)["model"].get();
             StructureBufferResourceItem<material>* materialSBRI = para->materials->get();
+            auto lastFrameRI = (*para->TextureResourceItemTable)["lastFrameBuffer"].get();
             para->cmdalloc->Reset();
             para->cmdlist->Reset(para->cmdalloc, PSO);
             //必须每个子线程都setRT，视口以及裁剪矩形
@@ -1097,6 +1406,11 @@ UINT __stdcall threadfunc(void* ppara) {
             para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(2), gpuhandle);
             gpuhandle = materialSBRI->getSRVGPU();
             para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(3), gpuhandle);
+            gpuhandle = para->randomNumbers->get()->getSRVGPU();
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(4), gpuhandle);
+            gpuhandle = para->lights->get()->getSRVGPU();
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(5), gpuhandle);
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(6), lastFrameRI->getSRVGPU(0));
             drawRenderItem(RI, para->cmdlist, RSI->getCBVTableIndex(0));//渲染项中包含objectconstant有纹理索引，可以在shader中找到资源项对应的纹理索引。
             para->cmdlist->Close();
             SetEvent(para->hEventRenderOver);

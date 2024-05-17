@@ -43,6 +43,7 @@ public:
 		for (int i = 0;i < numVertex;i++) {
 			fin >> ignore;
 			fin >> mvertices[i].position.x >> mvertices[i].position.y >> mvertices[i].position.z;
+			mvertices[i].position.w = 1.0f;
 			fin >> ignore;
 			fin >> mvertices[i].tangent.x >> mvertices[i].tangent.y >> mvertices[i].tangent.z >> mvertices[i].tangent.w;
 			fin >> ignore;

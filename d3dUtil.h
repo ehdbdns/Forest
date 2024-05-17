@@ -117,6 +117,7 @@ struct passconstant {
     XMFLOAT4X4 P;
     XMFLOAT4X4 S;
     UINT boxNum;
+    UINT nFrame;
 };
 
 struct objectconstant {
@@ -127,7 +128,7 @@ struct objectconstant {
 };
 
 struct modelVertex {
-    XMFLOAT3 position;
+    XMFLOAT4 position;
     XMFLOAT2 texuv;
     XMFLOAT3 normal;
     XMFLOAT4 tangent;

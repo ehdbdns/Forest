@@ -7,7 +7,7 @@
 #define GRS_UPPER(A,B) ((UINT)(((A)+((B)-1))&~(B - 1)))
 HANDLE g_hOutput = 0;
 std::unordered_map<ID3D12DescriptorHeap*, UINT>HeapOffsetTable;
-
+#define PI 3.1415926f
 
 namespace EST {
 
@@ -157,6 +157,13 @@ namespace EST {
                 startInit++;
             }
         }
+        void assign(T* startInit, int size) {
+            resize(size);
+            for (int i = 0;i < Size;i++) {
+                data[i] = *startInit;
+                startInit++;
+            }
+        }
         void free() {
             if (this->alloc == nullptr)
                 return;
@@ -267,7 +274,7 @@ struct Vertex
     XMFLOAT3 normal;
     XMFLOAT3 TangentU;
     float AOk = 0;
-    XMFLOAT3 color;
+    XMFLOAT3 color =XMFLOAT3{-1,-1,-1};
 };
 struct AABBbox {
     XMFLOAT3 center;
@@ -284,7 +291,7 @@ struct triangle {
     UINT texIndex;
     XMFLOAT3 pos3;
     float pad1;
-    XMFLOAT3 g;
+    XMFLOAT3 color;
     float pad2;
     XMFLOAT3 n;
     float pad3;
@@ -296,39 +303,25 @@ struct material {
     float roughness;
     XMFLOAT3 F0;
 };
+struct PolygonalLight {
+    float area;
+    float Xstart;
+    float Xend;
+    float Zstart;
+    float Zend;
+    XMFLOAT3 color;
+    XMFLOAT3 normal;
+};
 struct SAHnode {
     SAHnode* left=nullptr;
     SAHnode* right=nullptr;
     BoundingBox box;
     EST::vector<triangle>triangles;
 };
-int comparex(const void* a, const void* b)
-{
-    triangle first = *(triangle*)a;
-    triangle second = *(triangle*)b;
-    if (first.g.x < second.g.x)
-        return -1;
-    else
-        return 1;
-}
-int comparey(const void* a, const void* b)
-{
-    triangle first = *(triangle*)a;
-    triangle second = *(triangle*)b;
-    if (first.g.y < second.g.y)
-        return -1;
-    else
-        return 1;
-}
-int comparez(const void* a, const void* b)
-{
-    triangle first = *(triangle*)a;
-    triangle second = *(triangle*)b;
-    if (first.g.z < second.g.z)
-        return -1;
-    else
-        return 1;
-}
+struct lastVPmat {
+    XMMATRIX VP;
+    UINT nframe;
+};
 class SAHtree {
 public:
     SAHtree() = default;
@@ -425,7 +418,7 @@ public:
             v3max = XMVectorMax(v3max, ma);
         }
         XMStoreFloat3(&box.Center, 0.5f * (v3min + v3max));
-        XMStoreFloat3(&box.Extents, 0.5f * (v3max - v3min));
+        XMStoreFloat3(&box.Extents, 0.5f * (v3max - v3min)+XMVectorSet(0.1f,0.1f,0.1f,0.1f));
     }
     int CurrentTriangleIndex = 0;
     EST::vector<int>missIndexTable;
@@ -612,7 +605,7 @@ public:
             DefaultHeapState[i].memset(DefaultHeapState[i].Getdata(), 2, 0);
         }
     }
-    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear) {
+    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc, D3D12_CLEAR_VALUE* dsclear) {
         UINT currentSize = minSizeInKB*1000;
         int level = 0;
         ResourceID ID = { -1,-1 };
@@ -710,7 +703,7 @@ public:
             DefaultHeapState[i].memset(DefaultHeapState[i].Getdata(), 2, 0);
         }
     }
-    ResourceID createPlacedResourceInUploadTexSFLHeap(ID3D12Resource*Tex,UINT BufferSize) {
+    ResourceID createPlacedResourceInUploadTexSFLHeap(ID3D12Resource**Tex,UINT BufferSize) {
         UINT currentSize = minSizeInKB*1000;
         int level = 0;
         ResourceID ID = {-1,-1};
@@ -750,7 +743,7 @@ public:
                 , &CD3DX12_RESOURCE_DESC::Buffer(BufferSize)
                 , D3D12_RESOURCE_STATE_GENERIC_READ
                 , nullptr
-                , IID_PPV_ARGS(&Tex)));
+                , IID_PPV_ARGS(Tex)));
             UploadHeapState[level][1]++;//这个Heap存Resource的数量
             ID.HeapIndex = level;
             ID.HeapOffset = offset;
@@ -758,7 +751,7 @@ public:
         }
         return ID;
     }
-    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource* Tex, D3D12_RESOURCE_DESC* TextureDesc) {
+    ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc) {
         UINT currentSize = minSizeInKB*1000;
         int level = 0;
         ResourceID ID = { -1,-1 };
@@ -803,7 +796,7 @@ public:
                 , TextureDesc
                 , D3D12_RESOURCE_STATE_GENERIC_READ
                 , nullptr
-                , IID_PPV_ARGS(&Tex)));
+                , IID_PPV_ARGS(Tex)));
             DefaultHeapState[level][1]++;
             ID.HeapIndex = level;
             ID.HeapOffset = offset;
@@ -862,6 +855,12 @@ public:
         isSticker = issticker;
         TextureIndex = texindex;
     }
+    void setTextureToRI(ComPtr<ID3D12Resource> tex) {
+        Texture = tex;
+    }
+    ID3D12Resource* getResource() {
+        return Texture.Get();
+    }
     void createStickerTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, wchar_t* fileName) {
         if (!isSticker)
         {
@@ -869,17 +868,17 @@ public:
         }
        CreateDDSTextureFromFile12(device, cmdlist, fileName, Texture, TextureUpload);//这个库函数是用提交方式创建的，所以我们就让系统自己管理贴图资源,函数过程：loadDDS（）获得上传资源大小和已经创建好的默认堆资源，以及subresource，之后创建上传堆资源，之后updatesubresource
     }
-    void createNON_RT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear,NON_RT_DS_TextureSegregatedFreeLists*sfl) {
+    void createNON_RT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc,NON_RT_DS_TextureSegregatedFreeLists*sfl) {
         if (isSticker)
             return;
         NON_RT_DS_SFL = sfl;
-       ID= NON_RT_DS_SFL->createPlacedResourceInDefaultSFL(Texture.Get(), TextureDesc);
+       ID= NON_RT_DS_SFL->createPlacedResourceInDefaultSFL(&Texture, TextureDesc);
     }
-    void createRT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_HEAP_FLAGS flag, D3D12_CLEAR_VALUE* dsclear, RT_DS_TextureSegregatedFreeLists* sfl) {
+    void createRT_DS_WritableTex(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, D3D12_RESOURCE_DESC* TextureDesc, D3D12_CLEAR_VALUE* dsclear, RT_DS_TextureSegregatedFreeLists* sfl) {
         if (isSticker)
             return;
         RT_DS_SFL = sfl;
-        ID = RT_DS_SFL->createPlacedResourceInDefaultSFL(&Texture, TextureDesc,flag,dsclear);
+        ID = RT_DS_SFL->createPlacedResourceInDefaultSFL(&Texture, TextureDesc,dsclear);
     }
     void createSRVforResourceItem(D3D12_SHADER_RESOURCE_VIEW_DESC* srvDesc, ID3D12Device4* device, UINT SRVOffsetInHeap) {
         srvDesc->Format = Texture->GetDesc().Format;
@@ -897,11 +896,13 @@ public:
         SRVOffsetList.push_back(SRVOffsetInHeap);
         HeapOffsetTable[SRVUAVHeap]++;
     }
-    void createUAVforResourceItem(D3D12_UNORDERED_ACCESS_VIEW_DESC* uavDesc, ID3D12Device4* device, UINT UAVOffsetInHeap) {
+    void createUAVforResourceItem(D3D12_UNORDERED_ACCESS_VIEW_DESC* uavDesc, ID3D12Device4* device, UINT UAVOffsetInHeap, ID3D12GraphicsCommandList* cmdlist) {
         CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(SRVUAVHeap->GetCPUDescriptorHandleForHeapStart(), UAVOffsetInHeap, SRVUAVincrementSize);
         device->CreateUnorderedAccessView(Texture.Get(), nullptr, uavDesc, cpuHandle);
         UAVOffsetList.push_back(UAVOffsetInHeap);
         HeapOffsetTable[SRVUAVHeap]++;
+        cmdlist->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+        (Texture.Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
     }
     void createDSVforResourceItem(D3D12_DEPTH_STENCIL_VIEW_DESC* dsvDesc, ID3D12Device4* device, UINT DSVOffsetInHeap, ID3D12GraphicsCommandList* cmdlist) {
         CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(DSVHeap->GetCPUDescriptorHandleForHeapStart(), DSVOffsetInHeap, DSVincrementSize);
@@ -925,8 +926,8 @@ public:
     CD3DX12_GPU_DESCRIPTOR_HANDLE getUAVGPU(int UAVnote) {
         return CD3DX12_GPU_DESCRIPTOR_HANDLE(SRVUAVHeap->GetGPUDescriptorHandleForHeapStart(), UAVOffsetList[UAVnote], SRVUAVincrementSize);
     }
-    CD3DX12_GPU_DESCRIPTOR_HANDLE getRTVGPU() {
-        return CD3DX12_GPU_DESCRIPTOR_HANDLE(RTVHeap->GetGPUDescriptorHandleForHeapStart(), RTVoffset, RTVincrementSize);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE getRTVCPU() {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(RTVHeap->GetCPUDescriptorHandleForHeapStart(), RTVoffset, RTVincrementSize);
     }
     CD3DX12_CPU_DESCRIPTOR_HANDLE getDSVCPU() {
         return CD3DX12_CPU_DESCRIPTOR_HANDLE(DSVHeap->GetCPUDescriptorHandleForHeapStart(), DSVoffset, DSVincrementSize);
@@ -1030,7 +1031,7 @@ public:
         SRVCBVUAVincrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         this->str = strP;
         D3D12_RANGE range = { 0,0 };
-        strSize = (sizeof(T) + 255 & ~255)*elementNum;
+        strSize = (sizeof(T)*elementNum) + 255 & ~255;
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc;
         srvDesc.Buffer.FirstElement = 0;
         srvDesc.Buffer.NumElements = elementNum;
@@ -1049,6 +1050,7 @@ public:
             UpdateSubresources<1>(cmdlist, StructureBufferDefault.Get(), StructureBufferUpload.Get(), 0, 0, 1, &subResourceData);//这个函数只需先创建两个资源，然后他会帮你完成Map memcpy、unmap copyregion等操作
             CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(SRVHeap->GetCPUDescriptorHandleForHeapStart(), HeapOffsetTable[SRVHeap], SRVCBVUAVincrementSize);
             device->CreateShaderResourceView(StructureBufferDefault.Get(), &srvDesc, cpuHandle);
+            SRVoffset = HeapOffsetTable[SRVHeap];
             HeapOffsetTable[SRVHeap]++;
             //upBS->free(upID);//不要释放上传堆，他还有用
         }
@@ -1065,7 +1067,7 @@ public:
     void updateCB(T* strP) {
         if (isStatic)
             return;
-        str = *strP;
+        str = strP;
         memcpy(cbmapped, str, strSize);
     }
     CD3DX12_GPU_DESCRIPTOR_HANDLE getSRVGPU() {
@@ -1094,7 +1096,7 @@ public:
         freeVertexAndIndex();
     }
     template <typename T>
-    void createDynamicGeo(ID3D12Device4* device, bool isStatic, EST::vector<T>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
+    void createDynamicGeo(ID3D12Device4* device, EST::vector<T>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS) {
         //this->vertices = vertices;
         //this->indices = indices;
         indexNum = indices->size();
@@ -1104,7 +1106,7 @@ public:
 
         upBS->createPlacedBufferResourceInBS(&IndexBufferUpload, device, ibsize);
 
-        UINT8* vmapped = nullptr;UINT8* imapped = nullptr;
+
         D3D12_RANGE range = { 0,0 };
         VertexBufferUpload->Map(0, &range, reinterpret_cast<void**>(&vmapped));
         IndexBufferUpload->Map(0, &range, reinterpret_cast<void**>(&imapped));
@@ -1113,18 +1115,20 @@ public:
         memcpy(imapped, indices->Getdata(), ibsize);
         VertexBufferUpload->Unmap(0, nullptr);
         IndexBufferUpload->Unmap(0, nullptr);
-        if (!isStatic) {
             vbv.BufferLocation = VertexBufferUpload->GetGPUVirtualAddress();
             vbv.SizeInBytes = vbsize;
             vbv.StrideInBytes = sizeof(T);
             ibv.Format = DXGI_FORMAT_R16_UINT;
             ibv.SizeInBytes = ibsize;
             ibv.BufferLocation = IndexBufferUpload->GetGPUVirtualAddress();
-        }
+    }
+    template <typename T>
+    void updateVB(T* vp) {
+        memcpy(vmapped, vp, vbsize);
     }
     template <typename T>
     void createStaticGeo(ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, EST::vector<T>* vertices, EST::vector<std::uint16_t>* indices, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {//这之后必须excute
-        createDynamicGeo<T>(device, true, vertices, indices,upBS);
+        createDynamicGeo<T>(device,vertices, indices,upBS);
         defBS->createPlacedBufferResourceInBS(&VertexBufferDefault, device, vbsize);
 
         defBS->createPlacedBufferResourceInBS(&IndexBufferDefault, device, ibsize);
@@ -1158,7 +1162,8 @@ public:
 private:
     UINT vbsize;
     UINT ibsize;
-
+    UINT8* vmapped = nullptr;
+    UINT8* imapped = nullptr;
     //EST::vector<Vertex>* vertices;
     //EST::vector<std::uint16_t>* indices;
     D3D12_VERTEX_BUFFER_VIEW vbv;
@@ -1261,6 +1266,18 @@ private:
     ComPtr<ID3DBlob>vsshader = nullptr;
     ComPtr<ID3DBlob>psshader = nullptr;
 };
+class computePSOItem {
+public:
+    computePSOItem() = default;
+    computePSOItem(D3D12_COMPUTE_PIPELINE_STATE_DESC* computePSOdesc, std::wstring ShaderFileName, ID3D12Device4* device) {
+        csshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "CS", "cs_5_1");
+        computePSOdesc->CS = { reinterpret_cast<BYTE*>(csshader->GetBufferPointer()),csshader->GetBufferSize() };
+        ThrowIfFailed(device->CreateComputePipelineState(computePSOdesc, IID_PPV_ARGS(&PSO)));
+    }
+    ID3D12PipelineState* PSO;
+private:
+    ComPtr<ID3DBlob>csshader = nullptr;
+};
 void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objcPara) {
     CD3DX12_GPU_DESCRIPTOR_HANDLE objcHandle = ri->objconstantRI->getCBVGPU();
     cmdlist->SetGraphicsRootDescriptorTable(objcPara, objcHandle);
@@ -1269,9 +1286,104 @@ void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objc
     cmdlist->IASetPrimitiveTopology(ri->Primitive);
     cmdlist->DrawIndexedInstanced(ri->indexNum, ri->InstanceNum, ri->startIndex, ri->baseVertex, ri->startInstance);
 }
+void drawRenderItems(std::unordered_map<std::string,std::unique_ptr< RenderItem>>*RIs,ID3D12GraphicsCommandList* cmdlist, int objcPara) {
+    for (std::unordered_map<std::string, std::unique_ptr< RenderItem>>::iterator it = RIs->begin();it != RIs->end();it++) {
+        drawRenderItem(it->second.get(), cmdlist, objcPara);
+    }
+}
 void BuildBoxAndTriangleSBRI(SAHtree* tree, std::unique_ptr<StructureBufferResourceItem<AABBbox>>& boxSBRI,std::unique_ptr<StructureBufferResourceItem<triangle>>& triangleSBRI, ID3D12Device4* device, ID3D12GraphicsCommandList* cmdlist, ID3D12DescriptorHeap* srvheap, uploadBuddySystem* upBS, defaultBuddySystem* defBS) {
-     boxSBRI = std::make_unique<StructureBufferResourceItem<AABBbox>>(device, cmdlist, tree->SortedBoxes.Getdata(), false, srvheap, upBS, defBS, tree->SortedBoxes.size());
-     triangleSBRI = std::make_unique<StructureBufferResourceItem<triangle>>(device, cmdlist, tree->Triangles.Getdata(), false, srvheap, upBS, defBS, tree->Triangles.size());
+     boxSBRI = std::make_unique<StructureBufferResourceItem<AABBbox>>(device, cmdlist, tree->SortedBoxes.Getdata(), true, srvheap, upBS, defBS, tree->SortedBoxes.size());
+     triangleSBRI = std::make_unique<StructureBufferResourceItem<triangle>>(device, cmdlist, tree->Triangles.Getdata(), true, srvheap, upBS, defBS, tree->Triangles.size());
+}
+void GenerateRandomNum(EST::vector<float>& randnums, int num) {
+    for (int i = 0;i < num;i++)
+        randnums.push_back(rand() % 1001 / (float)1001);
+}
+void AddTrianglesToScene(EST::vector<triangle>& SceneTris, EST::vector<Vertex>& vertices, EST::vector<std::uint16_t>& indices,int texIndex) {
+    for (int i = 0;i < indices.size() / 3;i++) {
+        triangle tri;
+        tri.texIndex = texIndex;
+        Vertex v1 = vertices[indices[i * 3]];
+        Vertex v2 = vertices[indices[i * 3 + 1]];
+        Vertex v3 = vertices[indices[i * 3 + 2]];
+        tri.pos1 = XMFLOAT3{ v1.position.x,v1.position.y,v1.position.z };
+        tri.pos2 = XMFLOAT3{ v2.position.x,v2.position.y,v2.position.z };
+        tri.pos3 = XMFLOAT3{ v3.position.x,v3.position.y,v3.position.z };
+        tri.n = v1.normal;
+        tri.uv12 = XMFLOAT4{ v1.uv.x,v1.uv.y, v2.uv.x,v2.uv.y };
+        tri.uv3 = XMFLOAT2{ v3.uv.x,v3.uv.y };
+        tri.color = v2.color;
+        SceneTris.push_back(tri);
+    }
+}
+void updateLight(GeometryItem* LightGeo, PolygonalLight &l) {
+    Vertex Lightv[] = {
+ {XMFLOAT4{l.Xstart ,199.5,l.Zstart,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+{XMFLOAT4{l.Xend,199.5,l.Zstart,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+{XMFLOAT4{l.Xstart,199.5,l.Zend,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+{XMFLOAT4{l.Xend,199.5,l.Zend,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}}
+    };
+    LightGeo->updateVB(Lightv);
+}
+void CreateBox(float width, float height, float depth,EST::vector<Vertex>&vertices,EST::vector<std::uint16_t>&indices,XMFLOAT3 color)
+{
+    float w2 = 0.5f * width;
+    float h2 = 0.5f * height;
+    float d2 = 0.5f * depth;
+    Vertex v[24] = {
+        // Fill in the front face vertex data.
+        {XMFLOAT4{ -w2, -h2, -d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{ 0.0f, 0.0f, -1.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ -w2, +h2, -d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  0.0f, 0.0f, -1.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, -d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  0.0f, 0.0f, -1.0f},XMFLOAT3{1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, -h2, -d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{  0.0f, 0.0f, -1.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        // Fill in the back face vertex data.
+        {XMFLOAT4{ -w2, -h2, +d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{ 0.0f, 0.0f, 1.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, -h2, +d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{  0.0f, 0.0f, 1.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, +d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  0.0f, 0.0f, 1.0f},XMFLOAT3{-1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ -w2, +h2, +d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  0.0f, 0.0f, 1.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        // Fill in the top face vertex data.
+        {XMFLOAT4{ -w2, +h2, -d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{ 0.0f, 1.0f, 0.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ -w2, +h2, +d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  0.0f, 1.0f, 0.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, +d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  0.0f, 1.0f, 0.0f},XMFLOAT3{1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, -d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{  0.0f, 1.0f, 0.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},0,color},
+        // Fill in the bottom face vertex data.
+        {XMFLOAT4{ -w2, -h2, -d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{ 0.0f, -1.0f, 0.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, -h2, -d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{  0.0f, -1.0f, 0.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ +w2, -h2, +d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  0.0f, -1.0f, 0.0f},XMFLOAT3{-1.0f, 0.0f, 0.0f},0,color},
+        {XMFLOAT4{ -w2, -h2, +d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  0.0f, -1.0f, 0.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},0,color},
+        // Fill in the left face vertex data.
+        {XMFLOAT4{ -w2, -h2, +d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{ -1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f,-1.0f},0,color},
+        {XMFLOAT4{ -w2, +h2, +d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  -1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f, -1.0f},0,color},
+        {XMFLOAT4{ -w2, +h2, -d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  -1.0f, 0.0f, 0.0f},XMFLOAT3{0.0f, 0.0f, -1.0f},0,color},
+        {XMFLOAT4{ -w2, -h2, -d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{  -1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f, -1.0f},0,color},
+
+        {XMFLOAT4{ +w2, -h2, -d2,1.0f},XMFLOAT2{ 0.0f, 1.0f},XMFLOAT3{ 1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f,1.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, -d2,1.0f},XMFLOAT2{ 0.0f, 0.0f},XMFLOAT3{  1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f, 1.0f},0,color},
+        {XMFLOAT4{ +w2, +h2, +d2,1.0f},XMFLOAT2{ 1.0f, 0.0f},XMFLOAT3{  1.0f, 0.0f, 0.0f},XMFLOAT3{0.0f, 0.0f, 1.0f},0,color},
+        {XMFLOAT4{ +w2, -h2, +d2,1.0f},XMFLOAT2{ 1.0f, 1.0f},XMFLOAT3{  1.0f, 0.0f, 0.0f},XMFLOAT3{ 0.0f, 0.0f, 1.0f},0,color}
+        // Fill in the right face vertex data.
+    };
+    vertices.assign(v, 24);
+    std::uint16_t i[36];
+    // Fill in the front face index data
+    i[0] = 0; i[1] = 1; i[2] = 2;
+    i[3] = 0; i[4] = 2; i[5] = 3;
+    // Fill in the back face index data
+    i[6] = 4; i[7] = 5; i[8] = 6;
+    i[9] = 4; i[10] = 6; i[11] = 7;
+    // Fill in the top face index data
+    i[12] = 8; i[13] = 9; i[14] = 10;
+    i[15] = 8; i[16] = 10; i[17] = 11;
+    // Fill in the bottom face index data
+    i[18] = 12; i[19] = 13; i[20] = 14;
+    i[21] = 12; i[22] = 14; i[23] = 15;
+    // Fill in the left face index data
+    i[24] = 16; i[25] = 17; i[26] = 18;
+    i[27] = 16; i[28] = 18; i[29] = 19;
+    // Fill in the right face index data
+    i[30] = 20; i[31] = 21; i[32] = 22;
+    i[33] = 20; i[34] = 22; i[35] = 23;
+    indices.assign(i, 36);
 }
 class APP {
 public:
@@ -1287,6 +1399,7 @@ public:
     UINT nDXGIFactoryFlags = 0U;
     HWND hWnd = nullptr;
     UINT ThreadNum = 0;
+    lastVPmat lastvpmat;
     ComPtr<IDXGIFactory5>                pIDXGIFactory5;
     ComPtr<IDXGIAdapter1>                pIAdapter;
     ComPtr<ID3D12Device4>                pID3DDevice;

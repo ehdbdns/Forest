@@ -8,7 +8,7 @@ vertexout VS(vertexin pin)
     vout.positionW = posW;
     vout.uv = pin.uv;
     vout.color = pin.color;
-    vout.normal = pin.noraml;
+    vout.normal = mul(float4(pin.noraml, 1.0f), worldinvT);
     return vout;
 }
 float4 PS(vertexout pin) : SV_Target

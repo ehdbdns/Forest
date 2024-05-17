@@ -1,3 +1,6 @@
+#define PI 3.1415926f
+#define width 1024
+#define height 768
 struct ray
 {
     float3 direction;
@@ -20,7 +23,7 @@ struct MyTriangle
     int texIndex;
     float3 pos3;
     float pad1;
-    float3 g;
+    float3 color;
     float pad2;
     float3 n;
     float pad3;
@@ -32,6 +35,16 @@ struct material
     float3 albedo;
     float roughness;
     float3 F0;
+};
+struct PolygonalLight
+{
+    float area;
+    float Xstart;
+    float Xend;
+    float Zstart;
+    float Zend;
+    float3 color;
+    float3 normal;
 };
 struct vertexin
 {
@@ -56,6 +69,9 @@ Texture2D g_tex[8] : register(t0);
 StructuredBuffer<AABBbox> g_boxData : register(t0, space1);
 StructuredBuffer<MyTriangle> g_triangleData : register(t1, space1);
 StructuredBuffer<material> g_materialData : register(t2, space1);
+StructuredBuffer<float> g_randnums : register(t3, space1);
+StructuredBuffer<PolygonalLight> g_lights : register(t4, space1);
+Texture2D g_lastFrame : register(t5, space1);
 SamplerState g_sampler : register(s0);
 cbuffer passcb : register(b1)
 {
@@ -78,6 +94,7 @@ cbuffer passcb : register(b1)
     float4x4 P;
     float4x4 S;
     uint boxNum;
+    uint nFrame;
 }
 cbuffer objcb : register(b0)
 {
@@ -129,7 +146,24 @@ float smithG2(float3 h, float3 l, float3 n, float roughness, float Dotnv, float 
     float3 base2 = Xplus(Dothv) * Xplus(dot(h, l));
     return base2 / base1;
 }
-bool RayIntersectTriangle(float3 pos0, float3 pos1, float3 pos2, ray r, out float2 b1b2)
+float4 UniformSampleHemisphere(float2 E,float3 n)
+{
+    float Phi = 2 * 3.1415926f * E.x;
+    float CosTheta = E.y;
+    float SinTheta = sqrt(1 - CosTheta * CosTheta);
+
+    float3 H;
+    H.x = SinTheta * cos(Phi);
+    H.y = SinTheta * sin(Phi);
+    H.z = CosTheta;
+    float PDF = 1.0 / (2 * PI);
+    float3 up = abs(n.z) < 0.999 ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    float3 tangent = normalize(cross(up, n));
+    float3 bitangent = cross(n, tangent);
+    float3 sampleVec = tangent * H.x + bitangent * H.y + n * H.z; //注意是左乘矩阵
+    return float4(normalize(sampleVec), PDF);
+}
+bool RayIntersectTriangle(float3 pos0, float3 pos1, float3 pos2, ray r, out float2 b1b2,out float tout)
 {
     float3 E1 = pos1 - pos0;
     float3 E2 = pos2 - pos0;
@@ -142,6 +176,7 @@ bool RayIntersectTriangle(float3 pos0, float3 pos1, float3 pos2, ray r, out floa
     float b2 = c * dot(S2, r.direction);
     if (b1 > 0 && b2 > 0 && (1 - b1 - b2) > 0 && t > 0)
     {
+        tout = t;
         b1b2 = float2(b1, b2);
         return true;
     }
@@ -169,4 +204,87 @@ bool RayIntersectAABBBox(float3 boxCenter, float3 boxExtent, ray r)
     if (tEnter < tExit && tExit > 0)
         return true;
     return false;
+}
+bool RayIntersectScene(ray r, out MyTriangle outtri, out float2 b1b2,out float tout)
+{
+    AABBbox box;
+    int i = 0;
+    while (i < boxNum)
+    {
+        box = g_boxData[i];
+        if (RayIntersectAABBBox(box.center, box.extent, r))
+        {
+            if (box.isLeaf)
+            {
+                for (int j = 0; j < box.triangleNum; j++)
+                {
+                    MyTriangle tri = g_triangleData[box.triangleStart + j];
+                    float t;
+                    if (RayIntersectTriangle(tri.pos1, tri.pos2, tri.pos3, r, b1b2,t))
+                    {
+                        outtri = tri;
+                        tout = t;
+                        return true;
+                    }
+                }
+            }
+            i++;
+        }
+        else
+        {
+            if (box.missIndex > 0)
+            {
+                i = box.missIndex;
+                continue;
+            }
+            else
+                return false;
+        }
+    }
+    return false;
+}
+float3 calcDirectLightFromPolygonalLight(float3 shadingPoint, float3 spNormal,float3 BRDF,float2 uv)
+{
+    float randnum1 = g_randnums[uv.x * 10000%1000];
+    float randnum2 = g_randnums[uv.y * 10000%1000];
+    float dx = g_lights[0].Xend - g_lights[0].Xstart;
+    float dz = g_lights[0].Zend - g_lights[0].Zstart;
+    float3 sampleLightPos = float3(g_lights[0].Xstart + randnum1 * dx, 199.5f, g_lights[0].Zstart + randnum2 * dz);
+    float3 posToLight = sampleLightPos - shadingPoint;
+    //ray r;
+    //r.origin = shadingPoint;
+    //r.direction = normalize(posToLight);
+    //MyTriangle tri;
+    //float2 b1b2;
+    //float t=-1.0f;
+    //if (RayIntersectScene(r, tri, b1b2,t))
+    //{
+    //    if (t < posToLight.x / r.direction.x)
+    //    return float3(0, 0, 0);
+    //}
+    float3 toLight =sampleLightPos - shadingPoint;
+    float3 ToLightNorm = normalize(toLight);
+    float cos1 = dot(spNormal, ToLightNorm);
+    float cos2 = dot(normalize(g_lights[0].normal), -ToLightNorm);
+    float LengthSquare = toLight.x * toLight.x + toLight.y * toLight.y + toLight.z * toLight.z;
+    return BRDF * g_lights[0].color * cos1 * cos2 / LengthSquare * g_lights[0].area*100;
+}
+float3 calcDirectLightInFirstFrame(float3 shadingPoint, float3 spNormal, float3 BRDF,float2 uv)
+{
+    float3 DirectL = float3(0, 0, 0);
+    for (int i = 0; i < 100; i++)
+    {
+        float randnum1 = g_randnums[(uv.x * 10000 + i) % 1000];
+        float randnum2 = g_randnums[(uv.y * 10000 + i) % 1000];
+        float dx = g_lights[0].Xend - g_lights[0].Xstart;
+        float dz = g_lights[0].Zend - g_lights[0].Zstart;
+        float3 sampleLightPos = float3(g_lights[0].Xstart + randnum1 * dx, 199.5f, g_lights[0].Zstart + randnum2 * dz);
+        float3 toLight = sampleLightPos - shadingPoint;
+        float3 ToLightNorm = normalize(toLight);
+        float cos1 = dot(spNormal, ToLightNorm);
+        float cos2 = dot(normalize(g_lights[0].normal), -ToLightNorm);
+        float LengthSquare = toLight.x * toLight.x + toLight.y * toLight.y + toLight.z * toLight.z;
+        DirectL+= BRDF * g_lights[0].color * cos1 * cos2 / LengthSquare * g_lights[0].area * 100;
+    }
+    return DirectL / 100.0f;
 }

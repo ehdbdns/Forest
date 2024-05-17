@@ -1,61 +1,69 @@
-﻿  raytracer.cpp
+﻿  Camera.cpp
+  d3dApp.cpp
+  d3dUtil.cpp
+  DDSTextureLoader.cpp
+  GameTimer.cpp
+  GeometryGenerator.cpp
+  MathHelper.cpp
+  raytracer.cpp
 C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(25,34): warning C4244: “=”: 从“double”转换到“UINT”，可能丢失数据
 C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(81,30): warning C4018: “<”: 有符号/无符号不匹配
 C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(97,30): warning C4018: “<”: 有符号/无符号不匹配
 C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(109,29): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
 C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(110,26): warning C4018: “>”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(459,29): warning C4244: “=”: 从“double”转换到“UINT”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(461,26): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(462,21): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(470,12): warning C4244: “参数”: 从“double”转换到“UINT64”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(487,23): warning C4018: “>”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(493,42): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(494,36): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(497,60): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(508,33): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(509,24): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(524,62): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(610,26): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(628,19): warning C4018: “>”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(630,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(631,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(706,26): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(721,19): warning C4018: “>”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(723,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(724,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(774,19): warning C4018: “>”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(776,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(777,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1279,67): warning C4229: 使用了记时错误: 忽略数据上的修饰符
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1295,71): warning C4229: 使用了记时错误: 忽略数据上的修饰符
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(452,29): warning C4244: “=”: 从“double”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(454,26): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(455,21): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(463,12): warning C4244: “参数”: 从“double”转换到“UINT64”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(480,23): warning C4018: “>”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(486,42): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(487,36): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(490,60): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(501,33): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(502,24): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(517,62): warning C4244: “参数”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(603,26): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(621,19): warning C4018: “>”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(623,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(624,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(699,26): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(714,19): warning C4018: “>”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(716,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(717,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(767,19): warning C4018: “>”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(769,25): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(770,26): warning C4244: “初始化”: 从“double”转换到“int”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1391,67): warning C4229: 使用了记时错误: 忽略数据上的修饰符
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1408,71): warning C4229: 使用了记时错误: 忽略数据上的修饰符
 C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(18,20): warning C4018: “<”: 有符号/无符号不匹配
 C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(16,9): warning C4101: “a”: 未引用的局部变量
 C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(43,20): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(63,20): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(71,20): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(83,20): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(92,20): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(97,21): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(64,20): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(72,20): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(84,20): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(93,20): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\modelReader.h(98,21): warning C4018: “<”: 有符号/无符号不匹配
 C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(7,1): warning C4005: “GRS_WND_CLASS_NAME”: 宏重定义
 C:\mytinyrenderproj\rayTracer\rayTracer\d3dUtil.h(59,1): message : 参见“GRS_WND_CLASS_NAME”的前一个定义
 C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(8,1): warning C4005: “GRS_WND_TITLE”: 宏重定义
 C:\mytinyrenderproj\rayTracer\rayTracer\d3dUtil.h(60,1): message : 参见“GRS_WND_TITLE”的前一个定义
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(38,21): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
 C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(39,21): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(58,25): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(40,21): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
 C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(59,25): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(478,64): warning C4838: 从“__int64”转换到“int”需要收缩转换
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(478,76): warning C4305: “初始化”: 从“__int64”到“int”截断
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(478,64): warning C4309: “初始化”: 截断常量值
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(849,20): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(891,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(912,29): warning C4244: “初始化”: 从“double”转换到“float”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(979,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(985,38): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(987,38): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1011,38): warning C4018: “<”: 有符号/无符号不匹配
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1016,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1036,86): warning C4267: “参数”: 从“size_t”转换到“DWORD”，可能丢失数据
-C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(919,30): warning C4101: “front”: 未引用的局部变量
-C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1341): warning C4715: “APP::createWindow”: 不是所有的控件路径都返回值
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(60,25): warning C4244: “=”: 从“int”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(542,64): warning C4838: 从“__int64”转换到“int”需要收缩转换
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(542,76): warning C4305: “初始化”: 从“__int64”到“int”截断
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(542,64): warning C4309: “初始化”: 截断常量值
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1031,20): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1108,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1129,29): warning C4244: “初始化”: 从“double”转换到“float”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1245,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1251,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1253,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1319,38): warning C4018: “<”: 有符号/无符号不匹配
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1324,32): warning C4244: “=”: 从“UINT64”转换到“UINT”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1344,86): warning C4267: “参数”: 从“size_t”转换到“DWORD”，可能丢失数据
+C:\mytinyrenderproj\rayTracer\rayTracer\raytracer.cpp(1136,30): warning C4101: “front”: 未引用的局部变量
+  正在生成代码...
+C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.h(1454): warning C4715: “APP::createWindow”: 不是所有的控件路径都返回值
   rayTracer.vcxproj -> C:\mytinyrenderproj\rayTracer\rayTracer\rayTracer.exe
