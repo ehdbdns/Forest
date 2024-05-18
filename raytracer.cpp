@@ -162,6 +162,7 @@ private:
 
 
     D3D12_RECT							stScissorRect = { 0, 0, static_cast<LONG>(iWidth), static_cast<LONG>(iHeight) };
+    D3D12_RECT							stScissorRectwpos = { 0, 0, static_cast<LONG>(2048), static_cast<LONG>(1536) };
     ATOM                MyRegisterClass(HINSTANCE hInstance);
     BOOL                InitInstance(HINSTANCE, int, HWND, UINT, UINT);
     HINSTANCE hInst;                                // 当前实例
@@ -170,6 +171,7 @@ private:
     TCHAR								pszAppPath[MAX_PATH] = {};
     MSG  msg = {};
     D3D12_VIEWPORT stViewPort = { 0.0f, 0.0f, static_cast<float>(iWidth), static_cast<float>(iHeight), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
+    D3D12_VIEWPORT stViewPortwpos = { 0.0f, 0.0f, static_cast<float>(2048), static_cast<float>(1536), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
     // 此代码模块中包含的
 
     UINT nFrameIndex = 0;
@@ -270,7 +272,7 @@ void FirstAPP::createDescriptorHeap() {
     presrvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     presrvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&presrvheapdesc, IID_PPV_ARGS(&pIpresamheap)));
-    presrvheapdesc.NumDescriptors = 1;
+    presrvheapdesc.NumDescriptors = 2;
     presrvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     presrvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&presrvheapdesc, IID_PPV_ARGS(&pIDSVHeap)));
@@ -481,10 +483,12 @@ void FirstAPP::compileShadersAndCreatePSO() {
     }
 }
 void FirstAPP::createVideoMemoryManager() {
-  auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 4, pID3DDevice.Get());
+  auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 5, pID3DDevice.Get());
   RTDSSFLTable["RTDS"] = std::move(RTDSsfl);
+  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(3200, 5, pID3DDevice.Get());
+  RTDSSFLTable["RTDS1"] = std::move(RTDSsfl);
 
-  auto NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(3200, 4, pID3DDevice.Get());
+  auto NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(3200, 5, pID3DDevice.Get());
   NONRTDSSFLTable["NONRTDS"] = std::move(NONRTDSsfl);
 
   auto upBS = std::make_unique<uploadBuddySystem>(1024*128, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
@@ -520,8 +524,12 @@ void FirstAPP::createDepthBufferAndSampler() {
     DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear,RTDSSFLTable["RTDS"].get());
     DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
     TextureResourceItemTable["DS"] = std::move(DSRI);
-
-
+    dsdesc.Width = 2048;
+    dsdesc.Height = 1536;
+    DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false, -1);
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear, RTDSSFLTable["RTDS"].get());
+    DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
+    TextureResourceItemTable["wposDS"] = std::move(DSRI);
     //创建一个默认采样器及其资源项
     D3D12_SAMPLER_DESC preSamplerDesc = {};
     preSamplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
@@ -837,7 +845,10 @@ void FirstAPP::createResourceItem() {
     lastFrameBuffer->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->SRVUAVHeap]);
     lastFrameBuffer->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->RTVHeap],pIcmdlistpre.Get());
     TextureResourceItemTable["lastFrameBuffer"] = std::move(lastFrameBuffer);
-
+    rtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    filteredTexDesc.Width = 2048;
+    filteredTexDesc.Height = 1536;
+    filteredTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     auto wposTexRI= std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(),pIRTVHeap.Get(), nullptr, false, NULL);
     wposTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS"].get());
 
@@ -846,7 +857,7 @@ void FirstAPP::createResourceItem() {
     TextureResourceItemTable["wpos"] = std::move(wposTexRI);//wpos图
 
     auto normalTexRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
-    normalTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS"].get());
+    normalTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS1"].get());
     normalTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
     normalTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
     TextureResourceItemTable["normal"] = std::move(normalTexRI);//normal图
@@ -1212,7 +1223,7 @@ void FirstAPP::startRenderLoop() {
               
                     ThrowIfFailed(pIcmdlistpre->Reset(pIcmdallpre.Get(), nullptr));
                     //每帧都要渲染的预处理pass(变化的纹理,比如Gbuffer)
-                    auto DSV = TextureResourceItemTable["DS"].get()->getDSVCPU();
+                    auto DSV = TextureResourceItemTable["wposDS"].get()->getDSVCPU();
                     auto RSI = RootSignatureItemTable["default"].get();
                     auto wposRI = TextureResourceItemTable["wpos"].get();
                     auto normalRI = TextureResourceItemTable["normal"].get();
@@ -1220,8 +1231,8 @@ void FirstAPP::startRenderLoop() {
                     auto passRI = BufferResourceItemTable["pass"].get();
                     pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
                     pIcmdlistpre->OMSetRenderTargets(1,&wposRI->getRTVCPU(), true, &DSV);
-                    pIcmdlistpre->RSSetViewports(1, &stViewPort);
-                    pIcmdlistpre->RSSetScissorRects(1, &stScissorRect);
+                    pIcmdlistpre->RSSetViewports(1, &stViewPortwpos);
+                    pIcmdlistpre->RSSetScissorRects(1, &stScissorRectwpos);
                     pIcmdlistpre->SetGraphicsRootSignature(RSI->rs);
                     pIcmdlistpre->SetPipelineState(PSOITable["wpos"].get()->PSO);
                     ID3D12DescriptorHeap* heaps[2] = { wposRI->SRVUAVHeap,SRI->samplerHeap };

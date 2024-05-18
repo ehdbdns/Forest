@@ -44,7 +44,7 @@ void CS(uint2 GroupId : SV_GroupID,
         }
     }
     totalColor /= totalWeight;
-        DstTexture[DispatchThreadId] = float4(totalColor,1.0f);
+    DstTexture[DispatchThreadId] = float4(totalColor, 1.0f);
    
     GroupMemoryBarrierWithGroupSync();
 }

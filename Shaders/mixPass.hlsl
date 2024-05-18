@@ -52,12 +52,11 @@ void CS(uint2 GroupId : SV_GroupID,
 				 uint GroupThreadIndex : SV_GroupIndex,
 				 uint2 DispatchThreadId : SV_DispatchThreadID)
 {
-    float3 wpos = g_worldpos[DispatchThreadId].xyz * 400.0f - 200.0f;
+    float3 wpos = g_worldpos[DispatchThreadId*2].xyz * 400.0f - 200.0f;
     float4 backProjectCoord = mul(float4(wpos,1.0f), VP);
     float2 backProjectScreenCoord = ((backProjectCoord / backProjectCoord.w).xy + 1.0f) / 2.0f;
-    backProjectScreenCoord.y = (1.0f - backProjectScreenCoord.y);
-    int2 lastIndex = backProjectScreenCoord * int2(width, height);//通过motionVector得到上一帧坐标
-    float4 lastFrameColor = SrcTexture[lastIndex];
+    backProjectScreenCoord.y = (1.0f - backProjectScreenCoord.y); //通过motionVector得到上一帧坐标
+    float4 lastFrameColor = SrcTexture.SampleLevel(g_sampler,backProjectScreenCoord,0);
     float3 sumX = float3(0, 0, 0);
     float3 sumX2 = float3(0, 0, 0);
     for (int i = -3; i < 4; i++)
@@ -78,8 +77,8 @@ void CS(uint2 GroupId : SV_GroupID,
         DstTexture[DispatchThreadId] = DstTexture[DispatchThreadId]; //如果是outlier，那么将上一帧clamp到当前帧并直接赋值
     else
     {
-        float mixRate = max(0.8f, 100000.0f / (100000.0f + nframe));
-        DstTexture[DispatchThreadId] = (1.0f - mixRate) * DstTexture[DispatchThreadId] + (mixRate) * lastFrameColor;//如果不是outlier，则将上一帧与当前帧进行blend
+        float mixRate = 0.8f; //max(0.8f, 100000.0f / (100000.0f + nframe));
+        DstTexture[DispatchThreadId] = (1.0f - mixRate) * DstTexture[DispatchThreadId] + (mixRate) * lastFrameColor; //如果不是outlier，则将上一帧与当前帧进行blend
     }
     GroupMemoryBarrierWithGroupSync();
 }
