@@ -72,6 +72,8 @@ StructuredBuffer<material> g_materialData : register(t2, space1);
 StructuredBuffer<float> g_randnums : register(t3, space1);
 StructuredBuffer<PolygonalLight> g_lights : register(t4, space1);
 Texture2D g_lastFrame : register(t5, space1);
+Texture2D g_DirectL : register(t6, space1);
+Texture2D g_IndirectL : register(t7, space1);
 SamplerState g_sampler : register(s0);
 cbuffer passcb : register(b1)
 {
@@ -95,6 +97,7 @@ cbuffer passcb : register(b1)
     float4x4 S;
     uint boxNum;
     uint nFrame;
+    uint curtime;
 }
 cbuffer objcb : register(b0)
 {
@@ -245,8 +248,8 @@ bool RayIntersectScene(ray r, out MyTriangle outtri, out float2 b1b2,out float t
 }
 float3 calcDirectLightFromPolygonalLight(float3 shadingPoint, float3 spNormal,float3 BRDF,float2 uv)
 {
-    float randnum1 = g_randnums[uv.x * 10000%1000];
-    float randnum2 = g_randnums[uv.y * 10000%1000];
+    float randnum1 = g_randnums[(100000 * uv.x) % 1000];
+    float randnum2 = g_randnums[(100000 * uv.y) % 1000];
     float dx = g_lights[0].Xend - g_lights[0].Xstart;
     float dz = g_lights[0].Zend - g_lights[0].Zstart;
     float3 sampleLightPos = float3(g_lights[0].Xstart + randnum1 * dx, 199.5f, g_lights[0].Zstart + randnum2 * dz);
@@ -264,8 +267,8 @@ float3 calcDirectLightFromPolygonalLight(float3 shadingPoint, float3 spNormal,fl
     //}
     float3 toLight =sampleLightPos - shadingPoint;
     float3 ToLightNorm = normalize(toLight);
-    float cos1 = dot(spNormal, ToLightNorm);
-    float cos2 = dot(normalize(g_lights[0].normal), -ToLightNorm);
+    float cos1 = max(0, dot(spNormal, ToLightNorm));
+    float cos2 = max(0, dot(normalize(g_lights[0].normal), -ToLightNorm));
     float LengthSquare = toLight.x * toLight.x + toLight.y * toLight.y + toLight.z * toLight.z;
     return BRDF * g_lights[0].color * cos1 * cos2 / LengthSquare * g_lights[0].area*100;
 }
@@ -274,15 +277,15 @@ float3 calcDirectLightInFirstFrame(float3 shadingPoint, float3 spNormal, float3 
     float3 DirectL = float3(0, 0, 0);
     for (int i = 0; i < 100; i++)
     {
-        float randnum1 = g_randnums[(uv.x * 10000 + i) % 1000];
-        float randnum2 = g_randnums[(uv.y * 10000 + i) % 1000];
+        float randnum1 = g_randnums[(100000 * uv.x) % 1000+i];
+        float randnum2 = g_randnums[(100000 * uv.y) % 1000+i];
         float dx = g_lights[0].Xend - g_lights[0].Xstart;
         float dz = g_lights[0].Zend - g_lights[0].Zstart;
         float3 sampleLightPos = float3(g_lights[0].Xstart + randnum1 * dx, 199.5f, g_lights[0].Zstart + randnum2 * dz);
         float3 toLight = sampleLightPos - shadingPoint;
         float3 ToLightNorm = normalize(toLight);
-        float cos1 = dot(spNormal, ToLightNorm);
-        float cos2 = dot(normalize(g_lights[0].normal), -ToLightNorm);
+        float cos1 = max(0, dot(spNormal, ToLightNorm));
+        float cos2 = max(0, dot(normalize(g_lights[0].normal), -ToLightNorm));
         float LengthSquare = toLight.x * toLight.x + toLight.y * toLight.y + toLight.z * toLight.z;
         DirectL+= BRDF * g_lights[0].color * cos1 * cos2 / LengthSquare * g_lights[0].area * 100;
     }

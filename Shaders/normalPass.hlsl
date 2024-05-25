@@ -13,5 +13,5 @@ vertexout VS(vertexin pin)
 }
 float4 PS(vertexout pin) : SV_Target
 {
-    return float4((pin.normal + 1.0f) / 2.0f, 1.0f);
+    return float4((normalize(pin.normal) + 1.0f) / 2.0f, 1.0f);
 }

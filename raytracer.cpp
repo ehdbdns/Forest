@@ -230,9 +230,12 @@ private:
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<AABBbox>>>(boxTable);
     std::unordered_map<std::string, std::unique_ptr< StructureBufferResourceItem<triangle>>>(triangleTable);
     std::unique_ptr < StructureBufferResourceItem<float>> randomNumbers;
+    std::unique_ptr < StructureBufferResourceItem<XMINT2>> offsetArray[5];
+    std::unique_ptr < StructureBufferResourceItem<float>> hSBRI;
     std::unique_ptr < StructureBufferResourceItem<PolygonalLight>> lights;
     std::unique_ptr<StructureBufferResourceItem<material>>materials;
     std::unique_ptr < ConstantBufferResourceItem <lastVPmat>> lastvpmatRI;
+    XMMATRIX last6FramesVP[6];
     SAHtree sahtree;
     EST::vector<triangle>SceneTriangles;
     PolygonalLight l;
@@ -259,12 +262,12 @@ void FirstAPP::startRender() {
 void FirstAPP::createDescriptorHeap() {
     //描述符堆及采样器堆
     D3D12_DESCRIPTOR_HEAP_DESC rtvheapdesc = {};
-    rtvheapdesc.NumDescriptors = nFrameBackBufCount+5;//之后会加数量
+    rtvheapdesc.NumDescriptors = nFrameBackBufCount+10;//之后会加数量
     rtvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&rtvheapdesc, IID_PPV_ARGS(&pIRTVHeap)));
     D3D12_DESCRIPTOR_HEAP_DESC presrvheapdesc = {};
-    presrvheapdesc.NumDescriptors = 40;//先创建一个静态堆，之后等东西多了再加个动态管理器
+    presrvheapdesc.NumDescriptors = 90;//先创建一个静态堆，之后等东西多了再加个动态管理器
     presrvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     presrvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&presrvheapdesc, IID_PPV_ARGS(&pIpresrvheap)));
@@ -272,7 +275,7 @@ void FirstAPP::createDescriptorHeap() {
     presrvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     presrvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&presrvheapdesc, IID_PPV_ARGS(&pIpresamheap)));
-    presrvheapdesc.NumDescriptors = 2;
+    presrvheapdesc.NumDescriptors = 3;
     presrvheapdesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     presrvheapdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     ThrowIfFailed(pID3DDevice->CreateDescriptorHeap(&presrvheapdesc, IID_PPV_ARGS(&pIDSVHeap)));
@@ -327,7 +330,7 @@ void FirstAPP::createRootSignature() {
         {
             stFeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
         }
-#define rsNum 10
+#define rsNum 12
         //描述符表
         CD3DX12_DESCRIPTOR_RANGE roottables[rsNum] = {};
         roottables[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
@@ -340,6 +343,8 @@ void FirstAPP::createRootSignature() {
         roottables[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3,1);
         roottables[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4,1);
         roottables[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5,1);
+        roottables[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6,1);
+        roottables[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7,1);
         //跟参数
         CD3DX12_ROOT_PARAMETER rootparas[rsNum] = {};
         rootparas[0].InitAsDescriptorTable(1, &roottables[0], D3D12_SHADER_VISIBILITY_ALL);
@@ -352,6 +357,8 @@ void FirstAPP::createRootSignature() {
         rootparas[7].InitAsDescriptorTable(1, &roottables[7], D3D12_SHADER_VISIBILITY_ALL);
         rootparas[8].InitAsDescriptorTable(1, &roottables[8], D3D12_SHADER_VISIBILITY_ALL);
         rootparas[9].InitAsDescriptorTable(1, &roottables[9], D3D12_SHADER_VISIBILITY_ALL);
+        rootparas[10].InitAsDescriptorTable(1, &roottables[10], D3D12_SHADER_VISIBILITY_ALL);
+        rootparas[11].InitAsDescriptorTable(1, &roottables[11], D3D12_SHADER_VISIBILITY_ALL);
 
 
 
@@ -362,15 +369,26 @@ void FirstAPP::createRootSignature() {
         assert(rootsignature != nullptr);
         ThrowIfFailed(pID3DDevice->CreateRootSignature(0, rootsignature->GetBufferPointer(), rootsignature->GetBufferSize(), IID_PPV_ARGS(&pIRootSignature)));
         assert(pIRootSignature != nullptr);
-#define csrsnum 6
+#define csrsnum 17
         //CS跟签名
         CD3DX12_DESCRIPTOR_RANGE csroottables[csrsnum] = {};
         csroottables[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
         csroottables[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
         csroottables[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
         csroottables[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
-        csroottables[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
-        csroottables[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+        csroottables[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
+        csroottables[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
+        csroottables[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
+        csroottables[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+        csroottables[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
+        csroottables[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 2);
+        csroottables[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3);
+        csroottables[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 4);
+        csroottables[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);
+        csroottables[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
+        csroottables[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 5);
+        csroottables[15].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 6);
+        csroottables[16].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
 
         //跟参数
         CD3DX12_ROOT_PARAMETER csrootparas[csrsnum] = {};
@@ -380,6 +398,17 @@ void FirstAPP::createRootSignature() {
         csrootparas[3].InitAsDescriptorTable(1, &csroottables[3], D3D12_SHADER_VISIBILITY_ALL);
         csrootparas[4].InitAsDescriptorTable(1, &csroottables[4], D3D12_SHADER_VISIBILITY_ALL);
         csrootparas[5].InitAsDescriptorTable(1, &csroottables[5], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[6].InitAsDescriptorTable(1, &csroottables[6], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[7].InitAsDescriptorTable(1, &csroottables[7], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[8].InitAsDescriptorTable(1, &csroottables[8], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[9].InitAsDescriptorTable(1, &csroottables[9], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[10].InitAsDescriptorTable(1, &csroottables[10], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[11].InitAsDescriptorTable(1, &csroottables[11], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[12].InitAsDescriptorTable(1, &csroottables[12], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[13].InitAsDescriptorTable(1, &csroottables[13], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[14].InitAsDescriptorTable(1, &csroottables[14], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[15].InitAsDescriptorTable(1, &csroottables[15], D3D12_SHADER_VISIBILITY_ALL);
+        csrootparas[16].InitAsDescriptorTable(1, &csroottables[16], D3D12_SHADER_VISIBILITY_ALL);
 
 
 
@@ -454,48 +483,79 @@ void FirstAPP::compileShadersAndCreatePSO() {
         psodesc.SampleMask = UINT_MAX;
         psodesc.SampleDesc.Count = 1;
         psodesc.SampleDesc.Quality = 0;
-        auto PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawPlane.hlsl", pID3DDevice.Get());
-        PSOITable["raytrace"] = std::move(PSOI);
-        PSOI= std::make_unique<PSOItem>(&psodesc, L"Shaders//returnColor.hlsl", pID3DDevice.Get());
+        auto PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//DirectLuminance.hlsl", pID3DDevice.Get(),nullptr);
+        PSOITable["raytraceDirect"] = std::move(PSOI);
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//IndirectLightLuminance.hlsl", pID3DDevice.Get(), nullptr);
+        PSOITable["raytraceIndirect"] = std::move(PSOI);
+        PSOI= std::make_unique<PSOItem>(&psodesc, L"Shaders//returnColor.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["color"] = std::move(PSOI);
         psodesc.InputLayout = { modelinputdesc,_countof(modelinputdesc) };
         psodesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawModel.hlsl", pID3DDevice.Get());
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawModel.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["tex"] = std::move(PSOI);
         psodesc.InputLayout = { inputdesc,_countof(inputdesc) };
         psodesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
-        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawBox.hlsl", pID3DDevice.Get());
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//drawBox.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["box"] = std::move(PSOI);
         psodesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//wposPass.hlsl", pID3DDevice.Get());
+        psodesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//wposPass.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["wpos"] = std::move(PSOI);
-        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//normalPass.hlsl", pID3DDevice.Get());
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//normalPass.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["normal"] = std::move(PSOI);
-        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//firstFramePass.hlsl", pID3DDevice.Get());
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//zPass.hlsl", pID3DDevice.Get(), nullptr);
+        PSOITable["z"] = std::move(PSOI);
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//gzPass.hlsl", pID3DDevice.Get(), nullptr);
+        PSOITable["gz"] = std::move(PSOI);
+        psodesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//firstFramePass.hlsl", pID3DDevice.Get(),nullptr);
         PSOITable["firstFramePass"] = std::move(PSOI);
+        PSOI = std::make_unique<PSOItem>(&psodesc, L"Shaders//modulatePass.hlsl", pID3DDevice.Get(), nullptr);
+        PSOITable["modulatePass"] = std::move(PSOI);
         D3D12_COMPUTE_PIPELINE_STATE_DESC computePSOdesc = {};
         computePSOdesc.pRootSignature = pICSRootSignature.Get();
         computePSOdesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
-        auto computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//denoise.hlsl", pID3DDevice.Get());
+        auto computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//denoise.hlsl", pID3DDevice.Get(),nullptr);
         computePSOITable["denoise"] = std::move(computePSOI);
-        computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//mixPass.hlsl", pID3DDevice.Get());
+        computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//mixPass.hlsl", pID3DDevice.Get(),nullptr);
         computePSOITable["mixPass"] = std::move(computePSOI);
+        computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//accumulationPass.hlsl", pID3DDevice.Get(), nullptr);
+        computePSOITable["accumulationPass"] = std::move(computePSOI);
+        computePSOI = std::make_unique<computePSOItem>(&computePSOdesc, L"Shaders//variancePass.hlsl", pID3DDevice.Get(), nullptr);
+        computePSOITable["variancePass"] = std::move(computePSOI);
     }
 }
 void FirstAPP::createVideoMemoryManager() {
-  auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (3200, 5, pID3DDevice.Get());
+  auto RTDSsfl= std::make_unique< RT_DS_TextureSegregatedFreeLists> (GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
   RTDSSFLTable["RTDS"] = std::move(RTDSsfl);
-  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(3200, 5, pID3DDevice.Get());
+  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
   RTDSSFLTable["RTDS1"] = std::move(RTDSsfl);
+  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  RTDSSFLTable["RTDS2"] = std::move(RTDSsfl);
+  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  RTDSSFLTable["RTDS3"] = std::move(RTDSsfl);
+  RTDSsfl = std::make_unique< RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  RTDSSFLTable["RTDS4"] = std::move(RTDSsfl);
 
-  auto NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(3200, 5, pID3DDevice.Get());
+  auto NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
   NONRTDSSFLTable["NONRTDS"] = std::move(NONRTDSsfl);
+   NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  NONRTDSSFLTable["NONRTDS1"] = std::move(NONRTDSsfl);
+  NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  NONRTDSSFLTable["NONRTDS2"] = std::move(NONRTDSsfl);
+  NONRTDSsfl = std::make_unique< NON_RT_DS_TextureSegregatedFreeLists>(GRS_UPPER(3200, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), 5, pID3DDevice.Get());
+  NONRTDSSFLTable["NONRTDS3"] = std::move(NONRTDSsfl);
 
-  auto upBS = std::make_unique<uploadBuddySystem>(1024*128, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
-  upBSTable["default"] = std::move(upBS);
+  auto upBS = std::make_unique<uploadBuddySystem>(1024*256, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
+  upBSTable["UPBS"] = std::move(upBS);
+   upBS = std::make_unique<uploadBuddySystem>(1024 * 256, 8, pID3DDevice.Get());//最小64KB对齐,也就是最精细的buddy最小是64KB及其倍数
+  upBSTable["UPBS1"] = std::move(upBS);
 
-  auto defBS = std::make_unique<defaultBuddySystem>(1024*128, 8, pID3DDevice.Get());
-  defBSTable["default"] = std::move(defBS);
+  auto defBS = std::make_unique<defaultBuddySystem>(1024*256, 8, pID3DDevice.Get());
+  defBSTable["DEFBS"] = std::move(defBS);
+
+   defBS = std::make_unique<defaultBuddySystem>(1024 * 256, 8, pID3DDevice.Get());
+  defBSTable["DEFBS1"] = std::move(defBS);
 }
 void FirstAPP::createDepthBufferAndSampler() {
     //创建深度缓冲及其资源项
@@ -521,13 +581,17 @@ void FirstAPP::createDepthBufferAndSampler() {
     dsclear.DepthStencil.Depth = 1.0f;
     dsclear.DepthStencil.Stencil = 0;
     auto DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false,-1);
-    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear,RTDSSFLTable["RTDS"].get());
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear,RTDSSFLTable["RTDS3"].get());
     DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
     TextureResourceItemTable["DS"] = std::move(DSRI);
+     DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false, -1);
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear, RTDSSFLTable["RTDS3"].get());
+    DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
+    TextureResourceItemTable["DS1"] = std::move(DSRI);
     dsdesc.Width = 2048;
     dsdesc.Height = 1536;
     DSRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, pIDSVHeap.Get(), false, -1);
-    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear, RTDSSFLTable["RTDS"].get());
+    DSRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &dsdesc, &dsclear, RTDSSFLTable["RTDS3"].get());
     DSRI->createDSVforResourceItem(&dsvdesc, pID3DDevice.Get(), HeapOffsetTable[pIDSVHeap.Get()], pIcmdlistpre.Get());
     TextureResourceItemTable["wposDS"] = std::move(DSRI);
     //创建一个默认采样器及其资源项
@@ -688,10 +752,10 @@ void FirstAPP::createGeometryItemAndBVHData() {
     }
     //面光源顶点
     Vertex Lightv[] = {
-     {XMFLOAT4{10,199.5,-45,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
-  {XMFLOAT4{40,199.5,-45,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
-  {XMFLOAT4{10,199.5,-15,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
-  {XMFLOAT4{40,199.5,-15,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}}
+     {XMFLOAT4{0,199.5,-55,1.0f},XMFLOAT2{0,0},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{50,199.5,-55,1.0f},XMFLOAT2{1.0f,.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{0,199.5,-5,1.0f},XMFLOAT2{0,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}},
+  {XMFLOAT4{50,199.5,-5,1.0f},XMFLOAT2{1.0f,1.0f},XMFLOAT3{0,-1.0f,0},XMFLOAT3{1.0f,0,0},0,XMFLOAT3{1.0,1.0,1.0}}
     };
     std::uint16_t Lighti[] = {
         0,1,2,2,1,3
@@ -705,8 +769,8 @@ void FirstAPP::createGeometryItemAndBVHData() {
  
     //创建几何项以及渲染项
     //几何项
-    auto upBS = upBSTable["default"].get();
-    auto defBS = defBSTable["default"].get();
+    auto upBS = upBSTable["UPBS"].get();
+    auto defBS = defBSTable["DEFBS"].get();
     auto planeGeo = std::make_unique<GeometryItem>();
     planeGeo->createStaticGeo<Vertex>(pID3DDevice.Get(), pIcmdlistpre.Get(), &planev, &planei, upBS, defBS);
     GeometryItemTable["plane"] = std::move(planeGeo);
@@ -726,8 +790,8 @@ void FirstAPP::createGeometryItemAndBVHData() {
 void FirstAPP::createResourceItem() {
     //创建纹理资源以及缓冲资源
      //创建资源项
-    auto upBS = upBSTable["default"].get();
-    auto defBS = defBSTable["default"].get();
+    auto upBS = upBSTable["UPBS1"].get();
+    auto defBS = defBSTable["DEFBS1"].get();
     passconstant passc;
     auto passBRI = std::make_unique<ConstantBufferResourceItem<passconstant>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &passc, false, pIpresrvheap.Get(), upBS, defBS);
     BufferResourceItemTable["pass"] = std::move(passBRI);
@@ -743,12 +807,27 @@ void FirstAPP::createResourceItem() {
     GenerateRandomNum(randnums, 1000);
     randomNumberRI = std::make_unique<StructureBufferResourceItem<float>>(pID3DDevice.Get(), pIcmdlistpre.Get(), randnums.Getdata(), true, pIpresrvheap.Get(), upBS, defBS, randnums.size());
     randomNumbers = std::move(randomNumberRI);
-
+    std::unique_ptr<StructureBufferResourceItem<XMINT2>>offsetRI;
+    EST::vector<XMINT2>offsets;
+    GenerateOffsets(offsets);
+    for (int i = 0;i < 5;i++) {
+        offsetRI = std::make_unique<StructureBufferResourceItem<XMINT2>>(pID3DDevice.Get(), pIcmdlistpre.Get(), offsets.Getdata()+i*25, true, pIpresrvheap.Get(), upBS, defBS, 25);
+        offsetArray[i] = std::move(offsetRI);
+    }
+    std::unique_ptr<StructureBufferResourceItem<float>>hRI;
+    EST::vector<float>h;
+    h.push_back(1.0f/16.0f);
+    h.push_back(1.0f/4.0f);
+    h.push_back(3.0f/8.0f);
+    h.push_back(1.0f/4.0f);
+    h.push_back(1.0f/16.0f);
+    hRI = std::make_unique<StructureBufferResourceItem<float>>(pID3DDevice.Get(), pIcmdlistpre.Get(), h.Getdata(), true, pIpresrvheap.Get(), upBS, defBS,h.size() );
+    hSBRI = std::move(hRI);
     std::unique_ptr<StructureBufferResourceItem<PolygonalLight>>lightRI;
-    l.area = 900.0f;
+    l.area = 2500.0f;
     l.color = XMFLOAT3{ 1.0,1.0,1.0 };
-    l.Xstart = 10;l.Xend = 40;
-    l.Zstart = -45;l.Zend = -15;
+    l.Xstart = 0;l.Xend = 50;
+    l.Zstart = -55;l.Zend = -5;
     l.normal = XMFLOAT3{ 0,-1.0f,0 };
     lightRI = std::make_unique<StructureBufferResourceItem<PolygonalLight>>(pID3DDevice.Get(), pIcmdlistpre.Get(), &l, false, pIpresrvheap.Get(), upBS, defBS, 1);
     lights = std::move(lightRI);
@@ -826,8 +905,92 @@ void FirstAPP::createResourceItem() {
     filteredTexUavDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     filteredTexUavDesc.Texture2D.MipSlice = 0;
     filteredTexUavDesc.Texture2D.PlaneSlice = 0;
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
     filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap],pIcmdlistpre.Get());
-    TextureResourceItemTable["filteredtex"] = std::move(filteredRI);//降噪后的图放这
+    TextureResourceItemTable["DirectFilteredtex"] = std::move(filteredRI);//降噪过程要用的纹理
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["DirectFilteredtex1"] = std::move(filteredRI);//降噪过程要用的纹理
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectFilteredtex"] = std::move(filteredRI);//降噪过程要用的纹理
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectFilteredtex1"] = std::move(filteredRI);//降噪过程要用的纹理
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["DirectMoment1tex"] = std::move(filteredRI);//moment1
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["DirectMoment2tex"] = std::move(filteredRI);//moment2
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectMoment1tex"] = std::move(filteredRI);//moment1
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectMoment2tex"] = std::move(filteredRI);//moment2
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS1"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["DirectVariancetex"] = std::move(filteredRI);//variance
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS1"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectVariancetex"] = std::move(filteredRI);//variance
+    for (int i = 0;i < 6;i++) {
+        filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+        filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS1"].get());
+        filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+        filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+        TextureResourceItemTable["DirectHistorytex"+std::to_string(i)] = std::move(filteredRI);//historyTex
+    }
+    for (int i = 0;i < 6;i++) {
+        filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+        filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS2"].get());
+        filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+        filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+        TextureResourceItemTable["IndirectHistorytex" + std::to_string(i)] = std::move(filteredRI);//historyTex
+    }
+    for (int i = 1;i < 3;i++) {
+        filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+        filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS2"].get());
+        filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+        filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+        TextureResourceItemTable["DirectLastMoment" + std::to_string(i)] = std::move(filteredRI);//lastmomentTex
+    }
+    for (int i = 1;i < 3;i++) {
+        filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+        filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS3"].get());
+        filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+        filteredRI->createUAVforResourceItem(&filteredTexUavDesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap], pIcmdlistpre.Get());
+        TextureResourceItemTable["IndirectLastMoment" + std::to_string(i)] = std::move(filteredRI);//lastmomentTex
+    }
+    filteredTexDesc.Width = 2048;
+    filteredTexDesc.Height = 1536;
+    filteredTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    filteredRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), nullptr, nullptr, false, NULL);
+    filteredRI->createNON_RT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, NONRTDSSFLTable["NONRTDS3"].get());
+    filteredRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[filteredRI->SRVUAVHeap]);
+    TextureResourceItemTable["lastnormal"] = std::move(filteredRI);//lastNormalTex
+    filteredTexDesc.Width = 1024;
+    filteredTexDesc.Height = 768;
+    filteredTexDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     for (int i = 0;i < nFrameBackBufCount;i++) {
         auto backBufferRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(),nullptr, nullptr, false, NULL);
         backBufferRI->setTextureToRI(pIARenderTargets[i]);
@@ -841,17 +1004,21 @@ void FirstAPP::createResourceItem() {
     rtvDesc.Texture2D.PlaneSlice = 0;
     filteredTexDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     auto lastFrameBuffer = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
-    lastFrameBuffer->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc,nullptr, RTDSSFLTable["RTDS"].get());
+    lastFrameBuffer->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc,nullptr, RTDSSFLTable["RTDS1"].get());
     lastFrameBuffer->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->SRVUAVHeap]);
     lastFrameBuffer->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->RTVHeap],pIcmdlistpre.Get());
-    TextureResourceItemTable["lastFrameBuffer"] = std::move(lastFrameBuffer);
+    TextureResourceItemTable["DirectLastFrameBuffer"] = std::move(lastFrameBuffer);
+     lastFrameBuffer = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    lastFrameBuffer->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS1"].get());
+    lastFrameBuffer->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->SRVUAVHeap]);
+    lastFrameBuffer->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[lastFrameBuffer->RTVHeap], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectLastFrameBuffer"] = std::move(lastFrameBuffer);
     rtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     filteredTexDesc.Width = 2048;
     filteredTexDesc.Height = 1536;
     filteredTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     auto wposTexRI= std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(),pIRTVHeap.Get(), nullptr, false, NULL);
     wposTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS"].get());
-
     wposTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
     wposTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
     TextureResourceItemTable["wpos"] = std::move(wposTexRI);//wpos图
@@ -861,10 +1028,40 @@ void FirstAPP::createResourceItem() {
     normalTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
     normalTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
     TextureResourceItemTable["normal"] = std::move(normalTexRI);//normal图
+     normalTexRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    normalTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS2"].get());
+    normalTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    normalTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    TextureResourceItemTable["z"] = std::move(normalTexRI);//z图
+    normalTexRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    normalTexRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS3"].get());
+    normalTexRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    normalTexRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    TextureResourceItemTable["gz"] = std::move(normalTexRI);//gz图
+    filteredTexDesc.Width = 1024;
+    filteredTexDesc.Height = 768;
+    filteredTexDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    auto DirectLRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    DirectLRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS3"].get());
+    DirectLRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    DirectLRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    TextureResourceItemTable["DirectL"] = std::move(DirectLRI);//directL图
+
+    auto IndirectLRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    IndirectLRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS3"].get());
+    IndirectLRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    IndirectLRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    TextureResourceItemTable["IndirectL"] = std::move(IndirectLRI);//indirectL图
+     IndirectLRI = std::make_unique<TextureResourceItem>(pID3DDevice.Get(), pIpresrvheap.Get(), pIRTVHeap.Get(), nullptr, false, NULL);
+    IndirectLRI->createRT_DS_WritableTex(pID3DDevice.Get(), pIcmdlistpre.Get(), &filteredTexDesc, nullptr, RTDSSFLTable["RTDS4"].get());
+    IndirectLRI->createSRVforResourceItem(&SRVdesc, pID3DDevice.Get(), HeapOffsetTable[pIpresrvheap.Get()]);
+    IndirectLRI->createRTVforResourceItem(&rtvDesc, pID3DDevice.Get(), HeapOffsetTable[pIRTVHeap.Get()], pIcmdlistpre.Get());
+    TextureResourceItemTable["modulatetex"] = std::move(IndirectLRI);//modulate图
 }
 void FirstAPP::createRenderItem() {
-    auto upBS = upBSTable["default"].get();
-    auto defBS = defBSTable["default"].get();
+    auto upBS = upBSTable["UPBS"].get();
+    auto defBS = defBSTable["DEFBS"].get();
     //渲染项
     objectconstant objc;
     XMMATRIX world = XMMatrixTranslation(0, 0, 0);
@@ -1083,33 +1280,17 @@ void FirstAPP::startRenderLoop() {
                     XMStoreFloat4x4(&currpasscb.P, XMMatrixTranspose(projmat));
                     BufferResourceItemTable["pass"]->updateCB(&currpasscb);
                     lastVPmat lvp;
-                    lvp.VP =XMMatrixTranspose( vpmat);
+                    lvp.lastVP =XMMatrixTranspose( vpmat);
                     lvp.nframe = nFrame;
                     lastvpmatRI->updateCB(&lvp);
                     ThrowIfFailed(pIcmdlistpre->Reset(pIcmdallpre.Get(), nullptr));
                     //预处理pass渲染（整个程序只需要渲染一次）
-                    // 渲染第一帧
-                    auto DSV = TextureResourceItemTable["DS"].get()->getDSVCPU();
-                    auto RSI = RootSignatureItemTable["default"].get();
-                    auto SRI = SamplerResourceItemTable["default"].get();
-                    auto passRI = BufferResourceItemTable["pass"].get();
-                    auto firstFrameRI = TextureResourceItemTable["lastFrameBuffer"].get();//这里的firstFrameRI就是lastFrameBuffer
-                    auto firstTexRI = TextureResourceItemTable["grass"].get();
-                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-                    pIcmdlistpre->OMSetRenderTargets(1, &firstFrameRI->getRTVCPU(), true, &DSV);
-                    pIcmdlistpre->RSSetViewports(1, &stViewPort);
-                    pIcmdlistpre->RSSetScissorRects(1, &stScissorRect);
-                    pIcmdlistpre->SetGraphicsRootSignature(RSI->rs);
-                    pIcmdlistpre->SetPipelineState(PSOITable["firstFramePass"].get()->PSO);
-                    ID3D12DescriptorHeap* heaps[2] = { firstFrameRI->SRVUAVHeap,SRI->samplerHeap };
-                    pIcmdlistpre->SetDescriptorHeaps(2, heaps);
-                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), passRI->getCBVGPU());
-                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(0), firstTexRI->getSRVGPU(0));
-                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(4), randomNumbers.get()->getSRVGPU());
-                    pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(5), lights.get()->getSRVGPU());
-                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
-                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (firstFrameRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
+   
+                    auto lastDirectRI = TextureResourceItemTable["DirectLastFrameBuffer"].get();
+                    auto lastIndirectRI = TextureResourceItemTable["IndirectLastFrameBuffer"].get();
+
+                    ResourceBarrierTrans(lastDirectRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ,pIcmdlistpre.Get());
+                    ResourceBarrierTrans(lastIndirectRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ,pIcmdlistpre.Get());
                     //处理指令
                     pIcmdlistpre->Close();
                     nStates = 1;
@@ -1136,6 +1317,7 @@ void FirstAPP::startRenderLoop() {
                     float y = cos(phi);
                     nFrameIndex = pISwapChain3->GetCurrentBackBufferIndex();
                     currenttime = ::GetTickCount();
+                    currpasscb.curTime = (UINT)currenttime;
                     rotationAngle += (currenttime - starttime) * 0.003f;
                     float k = (currenttime - starttime) * 0.001;
                     timesecond += k;
@@ -1172,33 +1354,35 @@ void FirstAPP::startRenderLoop() {
                     if (GetAsyncKeyState(VK_LEFT) & 0x8000)
                     {
                         WriteConsole(g_hOutput, "d", 2, NULL, NULL);
-                        l.Xstart -= 1.0f;
-                        l.Xend -= 1.0f;
+                        l.Xstart -= 3.0f;
+                        l.Xend -= 3.0f;
                     }
                     if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
                     {
                         WriteConsole(g_hOutput, "d", 2, NULL, NULL);
-                        l.Xstart += 1.0f;
-                        l.Xend += 1.0f;
+                        l.Xstart += 3.0f;
+                        l.Xend += 3.0f;
                     }
                     if (GetAsyncKeyState(VK_UP) & 0x8000)
                     {
                         WriteConsole(g_hOutput, "d", 2, NULL, NULL);
-                        l.Zstart += 1.0f;
-                        l.Zend += 1.0f;
+                        l.Zstart += 3.0f;
+                        l.Zend += 3.0f;
                     }
                     if (GetAsyncKeyState(VK_DOWN) & 0x8000)
                     {
                         WriteConsole(g_hOutput, "d", 2, NULL, NULL);
-                        l.Zstart -= 1.0f;
-                        l.Zend -= 1.0f;
+                        l.Zstart -= 3.0f;
+                        l.Zend -= 3.0f;
                     }
                     if (rotationAngle >= XM_2PI)
                         rotationAngle = fmod(rotationAngle, XM_2PI);
                     XMMATRIX Viewmat = XMMatrixLookAtLH(eyepos, eyepos + XMVectorSet(x, y, z, 0), up);
                     XMMATRIX projmat = XMMatrixPerspectiveFovLH(XM_PIDIV2, (FLOAT)1 / (FLOAT)1, 0.1f, 1000.0f);
                     XMMATRIX vpmat = XMMatrixMultiply(Viewmat, projmat);
-                    lastvpmat.VP = XMMatrixTranspose( vpmat);
+                    lastvpmat.lastVP = XMMatrixTranspose( vpmat);
+                    lastvpmat.last6VP = XMMatrixTranspose(last6FramesVP[(nFrame) % 6]);
+                    last6FramesVP[(nFrame - 1) % 6] = vpmat;
                     lastvpmat.nframe = nFrame;
                     XMMATRIX invP = XMMatrixInverse(nullptr, projmat);
                     XMStoreFloat3(&currpasscb.eyepos, eyepos);
@@ -1229,6 +1413,12 @@ void FirstAPP::startRenderLoop() {
                     auto normalRI = TextureResourceItemTable["normal"].get();
                     auto SRI = SamplerResourceItemTable["default"].get();
                     auto passRI = BufferResourceItemTable["pass"].get();
+                    auto zRI = TextureResourceItemTable["z"].get();
+                    auto gzRI = TextureResourceItemTable["gz"].get();
+                    ResourceBarrierTrans(wposRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(normalRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(zRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(gzRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpre.Get());
                     pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
                     pIcmdlistpre->OMSetRenderTargets(1,&wposRI->getRTVCPU(), true, &DSV);
                     pIcmdlistpre->RSSetViewports(1, &stViewPortwpos);
@@ -1238,15 +1428,23 @@ void FirstAPP::startRenderLoop() {
                     ID3D12DescriptorHeap* heaps[2] = { wposRI->SRVUAVHeap,SRI->samplerHeap };
                     pIcmdlistpre->SetDescriptorHeaps(2, heaps);
                     pIcmdlistpre->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), passRI->getCBVGPU());
-                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0),nullptr);
                     pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
                     pIcmdlistpre->OMSetRenderTargets(1, &normalRI->getRTVCPU(), true, &DSV);
                     pIcmdlistpre->SetPipelineState(PSOITable["normal"].get()->PSO);
-                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0));
-                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (wposRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
-                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (normalRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0),nullptr);
+                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->OMSetRenderTargets(1, &zRI->getRTVCPU(), true, &DSV);
+                    pIcmdlistpre->SetPipelineState(PSOITable["z"].get()->PSO);
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0),nullptr);
+                    pIcmdlistpre->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->OMSetRenderTargets(1, &gzRI->getRTVCPU(), true, &DSV);
+                    pIcmdlistpre->SetPipelineState(PSOITable["gz"].get()->PSO);
+                    drawRenderItems(&RenderItemTable, pIcmdlistpre.Get(), RSI->getCBVTableIndex(0),nullptr);
+                    ResourceBarrierTrans(wposRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(normalRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(zRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpre.Get());
+                    ResourceBarrierTrans(gzRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpre.Get());
                     //cmdlistpre传入命令队列进行处理
                     pIcmdlistpre->Close();
                     nStates = 2;
@@ -1274,56 +1472,210 @@ void FirstAPP::startRenderLoop() {
                         ThrowIfFailed(pIcmdallpost->Reset());
                         ThrowIfFailed(pIcmdlistpost->Reset(pIcmdallpost.Get(), nullptr));
                     }
+                    auto DirectLRI = TextureResourceItemTable["DirectL"].get();
+                    auto IndirectLRI = TextureResourceItemTable["IndirectL"].get();
                     CD3DX12_CPU_DESCRIPTOR_HANDLE stRTVHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(pIRTVHeap->GetCPUDescriptorHandleForHeapStart(), nFrameIndex, pID3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV));
-                    pIcmdlistpre->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));//交换链资源在创建完后可以直接由present转换到rendertarget，我猜应该是common状态
+                    ResourceBarrierTrans(pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpre.Get());//交换链资源在创建完后可以直接由present转换到rendertarget，我猜应该是common状态
                     pIcmdlistpre->ClearRenderTargetView(stRTVHandle, Colors::AliceBlue, 0, nullptr);
                     pIcmdlistpre->ClearDepthStencilView(TextureResourceItemTable["DS"].get()->getDSVCPU(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->ClearDepthStencilView(TextureResourceItemTable["DS1"].get()->getDSVCPU(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpre->ClearRenderTargetView(DirectLRI->getRTVCPU(), Colors::Black, 0, nullptr);
+                    pIcmdlistpre->ClearRenderTargetView(IndirectLRI->getRTVCPU(), Colors::Black, 0, nullptr);
                     pIcmdlistpre->Close();
                     //后处理pass
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
+                    ResourceBarrierTrans(pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
                     pIcmdlistpost->SetComputeRootSignature(pICSRootSignature.Get());
-                    pIcmdlistpost->SetPipelineState(computePSOITable["denoise"].get()->PSO);
                     auto currentBackBufferRI = TextureResourceItemTable["backBuffer" + std::to_string(nFrameIndex)].get();
                     auto wposTexRI = TextureResourceItemTable["wpos"].get();
                     auto normalTexRI = TextureResourceItemTable["normal"].get();
+                    auto zTexRI = TextureResourceItemTable["z"].get();
+                    auto gzTexRI = TextureResourceItemTable["gz"].get();
                     auto samplerRI = SamplerResourceItemTable["default"].get();
                     auto RSI = RootSignatureItemTable["cs"].get();
-                    auto filteredTexRI = TextureResourceItemTable["filteredtex"].get();
-                    auto lastFrameBufferRI = TextureResourceItemTable["lastFrameBuffer"].get();
+                    auto DirectFilteredTexRI = TextureResourceItemTable["DirectFilteredtex"].get();
+                    auto IndirectFilteredTexRI = TextureResourceItemTable["IndirectFilteredtex"].get();
+                    auto DirectFilteredTex1RI = TextureResourceItemTable["DirectFilteredtex1"].get();
+                    auto IndirectFilteredTex1RI = TextureResourceItemTable["IndirectFilteredtex1"].get();
+                    auto DirectLastFrameBufferRI = TextureResourceItemTable["DirectLastFrameBuffer"].get();
+                    auto IndirectLastFrameBufferRI = TextureResourceItemTable["IndirectLastFrameBuffer"].get();
+                    auto DirectMoment1Tex = TextureResourceItemTable["DirectMoment1tex"].get();
+                    auto IndirectMoment1Tex = TextureResourceItemTable["IndirectMoment1tex"].get();
+                    auto DirectMoment2Tex = TextureResourceItemTable["DirectMoment2tex"].get();
+                    auto IndirectMoment2Tex = TextureResourceItemTable["IndirectMoment2tex"].get();
+                    auto DirectVarianceTexRI = TextureResourceItemTable["DirectVariancetex"].get();
+                    auto IndirectVarianceTexRI = TextureResourceItemTable["IndirectVariancetex"].get();
+                    auto DirectlastM1 = TextureResourceItemTable["DirectLastMoment1"].get();
+                    auto DirectlastM2 = TextureResourceItemTable["DirectLastMoment2"].get();
+                    auto IndirectlastM1 = TextureResourceItemTable["IndirectLastMoment1"].get();
+                    auto IndirectlastM2 = TextureResourceItemTable["IndirectLastMoment2"].get();
+                    auto lastnormalRI = TextureResourceItemTable["lastnormal"].get();
+                    ResourceBarrierTrans(DirectLRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLRI->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
                     ID3D12DescriptorHeap* heaps[2] = { wposTexRI->SRVUAVHeap,samplerRI->samplerHeap};
                     pIcmdlistpost->SetDescriptorHeaps(2, heaps);
-                    CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle = currentBackBufferRI->getSRVGPU(0);
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), gpuHandle);
-                    gpuHandle = wposTexRI->getSRVGPU(0);
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(1), gpuHandle);
-                    gpuHandle = normalTexRI->getSRVGPU(0);
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(2), gpuHandle);
-                    gpuHandle = samplerRI->getSampler();
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSamplerTableIndex(0), gpuHandle);
-                    gpuHandle = filteredTexRI->getUAVGPU(0);
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), gpuHandle);
-                    pIcmdlistpost->Dispatch(64, 48,1);//降噪！
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), DirectLRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(1), wposTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(2), normalTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(5), zTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(6), gzTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(4), hSBRI.get()->getSRVGPU());
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(7), lastnormalRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSamplerTableIndex(0), samplerRI->getSampler());
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), DirectFilteredTexRI->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(1), DirectMoment1Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(2), DirectMoment2Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(5), DirectlastM1->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(6), DirectlastM2->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getCBVTableIndex(0), lastvpmatRI->getCBVGPU());
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(3), TextureResourceItemTable["DirectHistorytex"+std::to_string((nFrame-1)%6)].get()->getUAVGPU(0));
+                    pIcmdlistpost->SetPipelineState(computePSOITable["accumulationPass"].get()->PSO);
+                    pIcmdlistpost->Dispatch(64, 48, 1);//累计当前帧到momentTex和historyTex
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), IndirectLRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(1), IndirectMoment1Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(2), IndirectMoment2Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(5), IndirectlastM1->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(6), IndirectlastM2->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(3), TextureResourceItemTable["IndirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getUAVGPU(0));
+                    pIcmdlistpost->Dispatch(64, 48, 1);//累计当前帧到momentTex和historyTex
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(4), IndirectVarianceTexRI->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(3), offsetArray[0].get()->getSRVGPU());
+                    pIcmdlistpost->SetPipelineState(computePSOITable["variancePass"].get()->PSO);
+                    pIcmdlistpost->Dispatch(64, 48, 1);//计算当前帧的variance作为filter的输入
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(1), DirectMoment1Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(2), DirectMoment2Tex->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(4), DirectVarianceTexRI->getUAVGPU(0));
+                    pIcmdlistpost->Dispatch(64, 48, 1);//计算当前帧的variance作为filter的输入
+                    ResourceBarrierTrans(DirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), DirectLRI->getSRVGPU(0));
+                    pIcmdlistpost->SetPipelineState(computePSOITable["denoise"].get()->PSO);
+                    for (int i = 0;i < 5;i++) {
+                        pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(3), offsetArray[i].get()->getSRVGPU());
+                        pIcmdlistpost->Dispatch(64, 48, 1);//降噪！
+                        if (i == 4)
+                            break;
+                        if (i % 2 == 0) {
+                            ResourceBarrierTrans(DirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                            ResourceBarrierTrans(DirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), DirectFilteredTexRI->getSRVGPU(0));
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), DirectFilteredTex1RI->getUAVGPU(0));
+                        }
+                        else {
+                            ResourceBarrierTrans(DirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                            ResourceBarrierTrans(DirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), DirectFilteredTex1RI->getSRVGPU(0));
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), DirectFilteredTexRI->getUAVGPU(0));
+                        }
+                    }
+                    ResourceBarrierTrans(DirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+
+                    ResourceBarrierTrans(IndirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), IndirectLRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(4), IndirectVarianceTexRI->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), IndirectFilteredTexRI->getUAVGPU(0));
+                    for (int i = 0;i < 5;i++) {
+                        pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(3), offsetArray[i].get()->getSRVGPU());
+                        pIcmdlistpost->Dispatch(64, 48, 1);//降噪！
+                        if (i == 4)
+                            break;
+                        if (i % 2 == 0) {
+                            ResourceBarrierTrans(IndirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                            ResourceBarrierTrans(IndirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), IndirectFilteredTexRI->getSRVGPU(0));
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), IndirectFilteredTex1RI->getUAVGPU(0));
+                        }
+                        else {
+                            ResourceBarrierTrans(IndirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                            ResourceBarrierTrans(IndirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), IndirectFilteredTex1RI->getSRVGPU(0));
+                            pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), IndirectFilteredTexRI->getUAVGPU(0));
+                        }
+                    }
+                    ResourceBarrierTrans(IndirectFilteredTex1RI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+
                     pIcmdlistpost->SetPipelineState(computePSOITable["mixPass"].get()->PSO);
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), lastFrameBufferRI->getSRVGPU(0));
-                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), filteredTexRI->getUAVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), DirectLastFrameBufferRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), DirectFilteredTexRI->getUAVGPU(0));
                     pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getCBVTableIndex(0), lastvpmatRI->getCBVGPU());
                     pIcmdlistpost->Dispatch(64, 48, 1);//混合！
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_GENERIC_READ,D3D12_RESOURCE_STATE_COPY_DEST));
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (filteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE));
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (lastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST));
-                    pIcmdlistpost->CopyResource(pIARenderTargets[nFrameIndex].Get(), filteredTexRI->getResource());//将降噪好的图复制到交换链及lastFrameBuffer上
-                    pIcmdlistpost->CopyResource(lastFrameBufferRI->getResource(), filteredTexRI->getResource());
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (filteredTexRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-                    pIcmdlistpost->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
-                    (lastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getSRVTableIndex(0), IndirectLastFrameBufferRI->getSRVGPU(0));
+                    pIcmdlistpost->SetComputeRootDescriptorTable(RSI->getUAVTableIndex(0), IndirectFilteredTexRI->getUAVGPU(0));
+                    pIcmdlistpost->Dispatch(64, 48, 1);//混合！
+                    ResourceBarrierTrans(pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(lastnormalRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(normalTexRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectLastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectMoment1Tex->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectMoment2Tex->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectMoment1Tex->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectMoment2Tex->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectLRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectlastM1->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectlastM2->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectlastM1->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectlastM2->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(TextureResourceItemTable["DirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(TextureResourceItemTable["IndirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST, pIcmdlistpost.Get());
+                    pIcmdlistpost->CopyResource(IndirectLastFrameBufferRI->getResource(), IndirectFilteredTexRI->getResource());
+                    pIcmdlistpost->CopyResource(DirectLastFrameBufferRI->getResource(), DirectFilteredTexRI->getResource());
+                    pIcmdlistpost->CopyResource(DirectlastM1->getResource(), DirectMoment1Tex->getResource());
+                    pIcmdlistpost->CopyResource(DirectlastM2->getResource(), DirectMoment2Tex->getResource());
+                    pIcmdlistpost->CopyResource(IndirectlastM1->getResource(), IndirectMoment1Tex->getResource());
+                    pIcmdlistpost->CopyResource(IndirectlastM2->getResource(), IndirectMoment2Tex->getResource());
+                    pIcmdlistpost->CopyResource(lastnormalRI->getResource(), normalTexRI->getResource());
+                    pIcmdlistpost->CopyResource(TextureResourceItemTable["DirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), DirectLRI->getResource());
+                    pIcmdlistpost->CopyResource(TextureResourceItemTable["IndirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), IndirectLRI->getResource());
+                    ResourceBarrierTrans(lastnormalRI->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(normalTexRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectMoment1Tex->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectMoment2Tex->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectMoment1Tex->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectMoment2Tex->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectLRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectlastM1->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectlastM2->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectlastM1->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectlastM2->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(TextureResourceItemTable["DirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(TextureResourceItemTable["IndirectHistorytex" + std::to_string((nFrame - 1) % 6)].get()->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+
+                    ResourceBarrierTrans(DirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectLastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLastFrameBufferRI->getResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, pIcmdlistpost.Get());
+                    RSI = RootSignatureItemTable["default"].get();
+                    TextureResourceItem* firstTRI = TextureResourceItemTable["grass"].get(); 
+                    auto modulateTex = TextureResourceItemTable["modulatetex"].get();
+                    auto DSV = TextureResourceItemTable["DS"].get()->getDSVCPU();
+                    auto passRI = BufferResourceItemTable["pass"].get();
+                    pIcmdlistpost->RSSetViewports(1, &stViewPort);
+                    pIcmdlistpost->RSSetScissorRects(1, &stScissorRect);
+                    pIcmdlistpost->SetPipelineState(PSOITable["modulatePass"].get()->PSO);
+                    pIcmdlistpost->SetGraphicsRootSignature(pIRootSignature.Get());
+                    pIcmdlistpost->SetDescriptorHeaps(2, heaps);
+                    pIcmdlistpost->ClearRenderTargetView(modulateTex->getRTVCPU(), Colors::AliceBlue, 0, nullptr);
+                    pIcmdlistpost->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+                    pIcmdlistpost->OMSetRenderTargets(1, &modulateTex->getRTVCPU(), true, &DSV);
+                    pIcmdlistpost->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(7), DirectFilteredTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(8), IndirectFilteredTexRI->getSRVGPU(0));
+                    pIcmdlistpost->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(0), firstTRI->getSRVGPU(0));
+                    pIcmdlistpost->SetGraphicsRootDescriptorTable(RSI->getSamplerTableIndex(0), samplerRI->getSampler());
+                    pIcmdlistpost->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), passRI->getCBVGPU());
+                    drawRenderItems(&RenderItemTable, pIcmdlistpost.Get(), RSI->getCBVTableIndex(0),RenderItemTable["light"].get());
+                    pIcmdlistpost->SetPipelineState(PSOITable["color"].get()->PSO);
+                    drawRenderItem(RenderItemTable["light"].get(), pIcmdlistpost.Get(), RSI->getCBVTableIndex(0));
+                    ResourceBarrierTrans(modulateTex->getResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE, pIcmdlistpost.Get());
+                    pIcmdlistpost->CopyResource(pIARenderTargets[nFrameIndex].Get(), modulateTex->getResource());//将modulate好的图复制到交换链及lastFrameBuffer上
+                    ResourceBarrierTrans(modulateTex->getResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(pIARenderTargets[nFrameIndex].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectLRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectLRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(DirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
+                    ResourceBarrierTrans(IndirectFilteredTexRI->getResource(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pIcmdlistpost.Get());
                     pIcmdlistpost->Close();
                     cmdlists.clear();
                     cmdlists.push_back(pIcmdlistpre.Get());
@@ -1389,40 +1741,37 @@ UINT __stdcall threadfunc(void* ppara) {
             auto BRI = (*para->BufferResourceItemTable)[para->BufferResourceItemName].get();
             SamplerResourceItem* SRI = (*para->SamplerResourceItemTable)[para->SamplerResourceItemItemName].get();
             TextureResourceItem* firstTRI = (*(para->TextureResourceItemTable))["grass"].get();//将连续纹理SRV中的第一个set到跟参数上，跟签名会自动将所有纹理都绑定上去
-            ID3D12PipelineState* PSO = (*para->PSOITable)[para->PSOName].get()->PSO;
             StructureBufferResourceItem<AABBbox>* boxSBRI = (*para->boxTable)["model"].get();
             StructureBufferResourceItem<triangle>* triangleSBRI = (*para->triangleTable)["model"].get();
             StructureBufferResourceItem<material>* materialSBRI = para->materials->get();
-            auto lastFrameRI = (*para->TextureResourceItemTable)["lastFrameBuffer"].get();
+            auto DirectLRI= (*para->TextureResourceItemTable)["DirectL"].get();
+            auto IndirectLRI= (*para->TextureResourceItemTable)["IndirectL"].get();
+            auto DirectLPSO = (*para->PSOITable)["raytraceDirect"].get()->PSO;
+            auto IndirectLPSO = (*para->PSOITable)["raytraceIndirect"].get()->PSO;
+            auto DSV = &(*para->TextureResourceItemTable)["DS"]->getDSVCPU();
+            auto DSV1 = &(*para->TextureResourceItemTable)["DS1"]->getDSVCPU();
             para->cmdalloc->Reset();
-            para->cmdlist->Reset(para->cmdalloc, PSO);
+            para->cmdlist->Reset(para->cmdalloc,DirectLPSO);
             //必须每个子线程都setRT，视口以及裁剪矩形
-            CD3DX12_CPU_DESCRIPTOR_HANDLE stRTVHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(para->RTVHeap->GetCPUDescriptorHandleForHeapStart(), *para->nCurrentFrameIndex, para->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV));
-            para->cmdlist->OMSetRenderTargets(1, &stRTVHandle, true,&(*para->TextureResourceItemTable)["DS"]->getDSVCPU());
+            para->cmdlist->OMSetRenderTargets(1, &DirectLRI->getRTVCPU(), true, DSV);
             para->cmdlist->RSSetViewports(1, para->stViewPort);
             para->cmdlist->RSSetScissorRects(1, para->stScissorRect);
             para->cmdlist->SetGraphicsRootSignature(RSI->rs);
-            para->cmdlist->SetPipelineState(PSO);
+            para->cmdlist->SetPipelineState(DirectLPSO);
             ID3D12DescriptorHeap* heaps[2] = {BRI->CBVHeap,SRI->samplerHeap};
             para->cmdlist->SetDescriptorHeaps(2, heaps);
-            CD3DX12_GPU_DESCRIPTOR_HANDLE gpuhandle = firstTRI->getSRVGPU(0);
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(0), gpuhandle);
-            gpuhandle = SRI->getSampler();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSamplerTableIndex(0), gpuhandle);
-            gpuhandle = BRI->getCBVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), gpuhandle);
-            gpuhandle = boxSBRI->getSRVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(1), gpuhandle);
-            gpuhandle = triangleSBRI->getSRVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(2), gpuhandle);
-            gpuhandle = materialSBRI->getSRVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(3), gpuhandle);
-            gpuhandle = para->randomNumbers->get()->getSRVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(4), gpuhandle);
-            gpuhandle = para->lights->get()->getSRVGPU();
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(5), gpuhandle);
-            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(6), lastFrameRI->getSRVGPU(0));
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(0), firstTRI->getSRVGPU(0));
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSamplerTableIndex(0), SRI->getSampler());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getCBVTableIndex(1), BRI->getCBVGPU());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(1), boxSBRI->getSRVGPU());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(2), triangleSBRI->getSRVGPU());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(3), materialSBRI->getSRVGPU());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(4), para->randomNumbers->get()->getSRVGPU());
+            para->cmdlist->SetGraphicsRootDescriptorTable(RSI->getSRVTableIndex(5), para->lights->get()->getSRVGPU());
             drawRenderItem(RI, para->cmdlist, RSI->getCBVTableIndex(0));//渲染项中包含objectconstant有纹理索引，可以在shader中找到资源项对应的纹理索引。
+            para->cmdlist->OMSetRenderTargets(1, &IndirectLRI->getRTVCPU(), true, DSV1);
+            para->cmdlist->SetPipelineState(IndirectLPSO);
+            drawRenderItem(RI, para->cmdlist, RSI->getCBVTableIndex(0));
             para->cmdlist->Close();
             SetEvent(para->hEventRenderOver);
         }

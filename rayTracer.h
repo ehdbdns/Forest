@@ -319,7 +319,8 @@ struct SAHnode {
     EST::vector<triangle>triangles;
 };
 struct lastVPmat {
-    XMMATRIX VP;
+    XMMATRIX lastVP;
+    XMMATRIX last6VP;
     UINT nframe;
 };
 class SAHtree {
@@ -606,7 +607,7 @@ public:
         }
     }
     ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc, D3D12_CLEAR_VALUE* dsclear) {
-        UINT currentSize = minSizeInKB*1000;
+        UINT currentSize = minSizeInKB*1024;
         int level = 0;
         ResourceID ID = { -1,-1 };
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT  TexLayouts = {};
@@ -621,7 +622,7 @@ public:
         if (level > listNum - 1)
             return ID;
         int NumResource = pow(2, 3 - min(3, level));
-        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        int SizeResource = pow(2, level) * minSizeInKB*1024;
         if (DefaultHeapState[level][0] == 0)
         {
             DefaultHeapState[level][0] = 1;
@@ -704,7 +705,7 @@ public:
         }
     }
     ResourceID createPlacedResourceInUploadTexSFLHeap(ID3D12Resource**Tex,UINT BufferSize) {
-        UINT currentSize = minSizeInKB*1000;
+        UINT currentSize = minSizeInKB*1024;
         int level = 0;
         ResourceID ID = {-1,-1};
         while (currentSize < BufferSize) {
@@ -714,7 +715,7 @@ public:
         if (level > listNum-1)
             return ID;
         int NumResource = pow(2, 3 - min(3, level));
-        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        int SizeResource = pow(2, level) * minSizeInKB*1024;
         if (UploadHeapState[level][0] == 0)
         {
             UploadHeapState[level][0] = 1;
@@ -752,7 +753,7 @@ public:
         return ID;
     }
     ResourceID createPlacedResourceInDefaultSFL(ID3D12Resource** Tex, D3D12_RESOURCE_DESC* TextureDesc) {
-        UINT currentSize = minSizeInKB*1000;
+        UINT currentSize = minSizeInKB*1024;
         int level = 0;
         ResourceID ID = { -1,-1 };
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT  TexLayouts = {};
@@ -767,7 +768,7 @@ public:
         if (level > listNum - 1)
             return ID;
         int NumResource = pow(2, 3 - min(3, level));
-        int SizeResource = pow(2, level) * GRS_UPPER(minSizeInKB, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)*1000;
+        int SizeResource = pow(2, level) * minSizeInKB * 1024;
         if (DefaultHeapState[level][0] == 0)
         {
             DefaultHeapState[level][0] = 1;
@@ -1254,9 +1255,9 @@ private:
 class PSOItem {
 public:
     PSOItem() = default;
-    PSOItem(D3D12_GRAPHICS_PIPELINE_STATE_DESC* PSOdesc, std::wstring ShaderFileName, ID3D12Device4* device) {
-        vsshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "VS", "vs_5_1");
-        psshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "PS", "ps_5_1");
+    PSOItem(D3D12_GRAPHICS_PIPELINE_STATE_DESC* PSOdesc, std::wstring ShaderFileName, ID3D12Device4* device,D3D_SHADER_MACRO*defines ) {
+        vsshader = d3dUtil::CompileShader(ShaderFileName, defines, "VS", "vs_5_1");
+        psshader = d3dUtil::CompileShader(ShaderFileName, defines, "PS", "ps_5_1");
         PSOdesc->VS = { reinterpret_cast<BYTE*>(vsshader->GetBufferPointer()),vsshader->GetBufferSize() };
         PSOdesc->PS = { reinterpret_cast<BYTE*>(psshader->GetBufferPointer()),psshader->GetBufferSize() };
         ThrowIfFailed(device->CreateGraphicsPipelineState(PSOdesc, IID_PPV_ARGS(&PSO)));
@@ -1269,8 +1270,8 @@ private:
 class computePSOItem {
 public:
     computePSOItem() = default;
-    computePSOItem(D3D12_COMPUTE_PIPELINE_STATE_DESC* computePSOdesc, std::wstring ShaderFileName, ID3D12Device4* device) {
-        csshader = d3dUtil::CompileShader(ShaderFileName, nullptr, "CS", "cs_5_1");
+    computePSOItem(D3D12_COMPUTE_PIPELINE_STATE_DESC* computePSOdesc, std::wstring ShaderFileName, ID3D12Device4* device,const D3D_SHADER_MACRO* defines) {
+        csshader = d3dUtil::CompileShader(ShaderFileName, defines, "CS", "cs_5_1");
         computePSOdesc->CS = { reinterpret_cast<BYTE*>(csshader->GetBufferPointer()),csshader->GetBufferSize() };
         ThrowIfFailed(device->CreateComputePipelineState(computePSOdesc, IID_PPV_ARGS(&PSO)));
     }
@@ -1286,8 +1287,10 @@ void drawRenderItem(RenderItem* ri, ID3D12GraphicsCommandList* cmdlist, int objc
     cmdlist->IASetPrimitiveTopology(ri->Primitive);
     cmdlist->DrawIndexedInstanced(ri->indexNum, ri->InstanceNum, ri->startIndex, ri->baseVertex, ri->startInstance);
 }
-void drawRenderItems(std::unordered_map<std::string,std::unique_ptr< RenderItem>>*RIs,ID3D12GraphicsCommandList* cmdlist, int objcPara) {
+void drawRenderItems(std::unordered_map<std::string,std::unique_ptr< RenderItem>>*RIs,ID3D12GraphicsCommandList* cmdlist, int objcPara,RenderItem*out) {
     for (std::unordered_map<std::string, std::unique_ptr< RenderItem>>::iterator it = RIs->begin();it != RIs->end();it++) {
+        if (it->second.get() == out)
+            continue;
         drawRenderItem(it->second.get(), cmdlist, objcPara);
     }
 }
@@ -1298,6 +1301,20 @@ void BuildBoxAndTriangleSBRI(SAHtree* tree, std::unique_ptr<StructureBufferResou
 void GenerateRandomNum(EST::vector<float>& randnums, int num) {
     for (int i = 0;i < num;i++)
         randnums.push_back(rand() % 1001 / (float)1001);
+}
+void GenerateOffsets(EST::vector<XMINT2>& offsets) {
+    for (int i = 0;i < 5;i++) {
+        for (int j = -2;j < 3;j++) {
+            for (int k = -2;k < 3;k++) {
+                XMINT2 int2 = XMINT2{ j * (int)pow(2,i),k * (int)pow(2,i) };
+                offsets.push_back(int2);
+            }
+        }
+    }
+}
+void ResourceBarrierTrans(ID3D12Resource* r, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after, ID3D12GraphicsCommandList*cmdlist) {
+    cmdlist->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition
+    (r, before, after));
 }
 void AddTrianglesToScene(EST::vector<triangle>& SceneTris, EST::vector<Vertex>& vertices, EST::vector<std::uint16_t>& indices,int texIndex) {
     for (int i = 0;i < indices.size() / 3;i++) {

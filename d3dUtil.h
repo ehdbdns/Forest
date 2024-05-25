@@ -118,6 +118,7 @@ struct passconstant {
     XMFLOAT4X4 S;
     UINT boxNum;
     UINT nFrame;
+    UINT curTime;
 };
 
 struct objectconstant {
